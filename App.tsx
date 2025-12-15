@@ -4,9 +4,6 @@ import {
   FileText, 
   Columns, 
   MessageSquare, 
-  Save,
-  Wand2,
-  RefreshCw,
   Calendar as CalendarIcon,
   ChevronLeft,
   ChevronRight,
@@ -18,10 +15,9 @@ import ChatInterface from './components/ChatInterface';
 import SettingsModal from './components/SettingsModal';
 import AddEventTaskModal from './components/AddEventTaskModal';
 import { INITIAL_TEMPLATE } from './utils/constants';
-import { generatePlan, summarizeProgress } from './services/geminiService';
 import { updateSectionForDate } from './utils/textManager';
 import { addEventTaskToContent, extractEventName } from './utils/eventTasks';
-import { deleteEventSubtask } from './utils/doingDone.js';
+import { deleteEventSubtask, deleteEvent } from './utils/doingDone.js';
 import { handleOAuthCallback, fetchEvents, isConnected, OAuthProvider } from './services/oauth';
 import { ViewMode } from './types';
 
@@ -32,7 +28,6 @@ const App: React.FC = () => {
   const [viewMode, setViewMode] = useState<ViewMode>(ViewMode.SPLIT);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [addTaskModal, setAddTaskModal] = useState<{
     isOpen: boolean;
@@ -40,6 +35,7 @@ const App: React.FC = () => {
     eventRawLine: string;
   }>({ isOpen: false, dateStr: '', eventRawLine: '' });
   const [oauthMessage, setOauthMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
   
   // Date Navigation State
   const [selectedDate, setSelectedDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
@@ -196,29 +192,9 @@ const App: React.FC = () => {
     setContent((prev) => deleteEventSubtask({ content: prev, dateStr, subtaskRawLine }));
   }, []);
 
-  const handleAiOrganize = useCallback(async () => {
-    setIsProcessing(true);
-    try {
-      const organizedContent = await generatePlan(content);
-      setContent(organizedContent);
-    } catch (e) {
-      alert("Failed to organize content.");
-    } finally {
-      setIsProcessing(false);
-    }
-  }, [content]);
-
-  const handleAiSummary = useCallback(async () => {
-    setIsProcessing(true);
-    try {
-      const summary = await summarizeProgress(content);
-      setContent(prev => prev + `\n\n[NOTES]\n* AI Summary (${new Date().toLocaleTimeString()}): ${summary}`);
-    } catch (e) {
-       alert("Failed to generate summary.");
-    } finally {
-      setIsProcessing(false);
-    }
-  }, [content]);
+  const handleDeleteEvent = useCallback((dateStr: string, eventRawLine: string) => {
+    setContent((prev) => deleteEvent({ content: prev, dateStr, eventRawLine }));
+  }, []);
 
   return (
     <div className="flex flex-col h-screen w-screen bg-gray-50 text-gray-800 font-sans overflow-hidden">
@@ -299,25 +275,6 @@ const App: React.FC = () => {
               <Settings className="w-5 h-5" />
             </button>
 
-             <button 
-              onClick={handleAiOrganize}
-              disabled={isProcessing}
-              className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-md hover:bg-indigo-100 transition-colors text-xs sm:text-sm font-medium"
-              title="Auto Organize"
-            >
-              {isProcessing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
-              <span className="hidden lg:inline">Auto-Organize</span>
-            </button>
-             <button 
-              onClick={handleAiSummary}
-              disabled={isProcessing}
-              className="flex items-center gap-2 px-3 py-1.5 text-gray-600 rounded-md hover:bg-gray-100 transition-colors text-xs sm:text-sm font-medium"
-              title="Summarize"
-            >
-              <Save className="w-4 h-4" />
-              <span className="hidden lg:inline">Summarize</span>
-            </button>
-            
             <button 
               onClick={() => setIsChatOpen(true)}
               className="flex items-center gap-2 px-3 py-1.5 bg-gray-900 text-white rounded-md hover:bg-gray-800 transition-colors text-xs sm:text-sm font-medium"
@@ -357,9 +314,9 @@ const App: React.FC = () => {
             content={content} 
             focusedDate={selectedDate}
             onAddEntry={handleAddEntry}
-            onSyncGoogleCalendar={(dateStr) => handleSyncCalendar('google', dateStr)}
-            onSyncOutlookCalendar={(dateStr) => handleSyncCalendar('microsoft', dateStr)}
+            onSyncCalendar={(dateStr) => handleSyncCalendar('google', dateStr)}
             onAddEventTask={handleAddEventTask}
+            onDeleteEvent={handleDeleteEvent}
             onDeleteEventSubtask={handleDeleteEventSubtask}
             onToggleItem={handleToggleItem}
           />

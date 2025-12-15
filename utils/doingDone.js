@@ -186,6 +186,50 @@ export const moveDoingItemToDone = (params) => {
   return lines.join('\n');
 };
 
+export const deleteEvent = (params) => {
+  const { content, dateStr, eventRawLine } = params;
+  if (!content || !dateStr || !eventRawLine) return content;
+
+  const lines = content.split('\n');
+  const block = findDateBlock(lines, dateStr);
+  if (!block) return content;
+
+  const events = findSectionWithinBlock(lines, block.dateIndex, block.blockEnd, '[EVENTS]');
+  if (!events) return content;
+
+  const targetNorm = normalizeForMatch(eventRawLine);
+
+  // Find the event line
+  let eventIndex = -1;
+  for (let i = events.headerIndex + 1; i < events.endIndex; i++) {
+    const line = lines[i] || '';
+    // Skip indented lines (children) and empty lines
+    if (line.startsWith('  ') || line.startsWith('\t') || !line.trim()) continue;
+    if (line === eventRawLine || line.trim() === eventRawLine.trim() || normalizeForMatch(line) === targetNorm) {
+      eventIndex = i;
+      break;
+    }
+  }
+
+  if (eventIndex === -1) return content;
+
+  // Count how many child lines follow this event (indented lines)
+  let childCount = 0;
+  for (let i = eventIndex + 1; i < events.endIndex; i++) {
+    const line = lines[i] || '';
+    if (line.startsWith('  ') || line.startsWith('\t')) {
+      childCount++;
+    } else {
+      break;
+    }
+  }
+
+  // Remove the event and all its children
+  lines.splice(eventIndex, 1 + childCount);
+
+  return lines.join('\n');
+};
+
 export const deleteEventSubtask = (params) => {
   const { content, dateStr, subtaskRawLine } = params;
   if (!content || !dateStr || !subtaskRawLine) return content;

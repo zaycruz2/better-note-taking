@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, CheckCircle, AlertCircle, ExternalLink, Settings, LogOut } from 'lucide-react';
-import { isConnected, startOAuthFlow, disconnect, OAuthProvider } from '../services/oauth';
+import { isConnected, startOAuthFlow, disconnect } from '../services/oauth';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -9,32 +9,26 @@ interface SettingsModalProps {
 
 const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
   const [googleConnected, setGoogleConnected] = useState(false);
-  const [microsoftConnected, setMicrosoftConnected] = useState(false);
   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [statusMsg, setStatusMsg] = useState('');
 
   useEffect(() => {
     if (isOpen) {
       setGoogleConnected(isConnected('google'));
-      setMicrosoftConnected(isConnected('microsoft'));
       setStatus('idle');
       setStatusMsg('');
     }
   }, [isOpen]);
 
-  const handleConnect = (provider: OAuthProvider) => {
-    startOAuthFlow(provider);
+  const handleConnect = () => {
+    startOAuthFlow('google');
   };
 
-  const handleDisconnect = (provider: OAuthProvider) => {
-    disconnect(provider);
-    if (provider === 'google') {
-      setGoogleConnected(false);
-    } else {
-      setMicrosoftConnected(false);
-    }
+  const handleDisconnect = () => {
+    disconnect('google');
+    setGoogleConnected(false);
     setStatus('success');
-    setStatusMsg(`Disconnected from ${provider === 'google' ? 'Google Calendar' : 'Microsoft Outlook'}`);
+    setStatusMsg('Disconnected from Google Calendar');
   };
 
   if (!isOpen) return null;
@@ -64,11 +58,11 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
             </div>
           )}
 
-          {/* Calendar Connections */}
+          {/* Calendar Connection */}
           <div className="space-y-4">
-            <h3 className="font-semibold text-gray-800">Calendar Connections</h3>
+            <h3 className="font-semibold text-gray-800">Calendar Connection</h3>
             <p className="text-sm text-gray-500 leading-relaxed">
-              Connect your calendars to sync events automatically. Click the refresh icon in the Events section to import events for any date.
+              Connect your calendar to sync events automatically. Click the refresh icon in the Events section to import events for any date.
             </p>
 
             {/* Google Calendar */}
@@ -97,7 +91,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
               </div>
               {googleConnected ? (
                 <button
-                  onClick={() => handleDisconnect('google')}
+                  onClick={handleDisconnect}
                   className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                 >
                   <LogOut className="w-4 h-4" />
@@ -105,50 +99,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                 </button>
               ) : (
                 <button
-                  onClick={() => handleConnect('google')}
+                  onClick={handleConnect}
                   className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium text-gray-700"
                 >
                   Sign in with Google
-                </button>
-              )}
-            </div>
-
-            {/* Microsoft Outlook */}
-            <div className="flex items-center justify-between p-4 border border-gray-200 rounded-lg">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-white border border-gray-200 flex items-center justify-center">
-                  <svg viewBox="0 0 24 24" className="w-6 h-6">
-                    <path fill="#0078D4" d="M21.17 2.06A2.06 2.06 0 0119.11 0H4.89a2.06 2.06 0 00-2.06 2.06v19.88A2.06 2.06 0 004.89 24h14.22a2.06 2.06 0 002.06-2.06V2.06z"/>
-                    <path fill="#fff" d="M12 6.5L5.5 10v7.5L12 21l6.5-3.5V10L12 6.5zm0 2.3l4.2 2.3L12 13.4 7.8 11.1l4.2-2.3zm-4.5 3.6l4 2.1v4l-4-2.1v-4zm9 0v4l-4 2.1v-4l4-2.1z"/>
-                  </svg>
-                </div>
-                <div>
-                  <div className="font-medium text-gray-900">Microsoft Outlook</div>
-                  <div className="text-xs text-gray-500">
-                    {microsoftConnected ? (
-                      <span className="text-green-600 flex items-center gap-1">
-                        <CheckCircle className="w-3 h-3" /> Connected
-                      </span>
-                    ) : (
-                      'Not connected'
-                    )}
-                  </div>
-                </div>
-              </div>
-              {microsoftConnected ? (
-                <button
-                  onClick={() => handleDisconnect('microsoft')}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                >
-                  <LogOut className="w-4 h-4" />
-                  Disconnect
-                </button>
-              ) : (
-                <button
-                  onClick={() => handleConnect('microsoft')}
-                  className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium text-gray-700"
-                >
-                  Sign in with Microsoft
                 </button>
               )}
             </div>
