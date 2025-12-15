@@ -16,10 +16,12 @@ import Editor from './components/Editor';
 import Visualizer from './components/Visualizer';
 import ChatInterface from './components/ChatInterface';
 import SettingsModal from './components/SettingsModal';
+import AddEventTaskModal from './components/AddEventTaskModal';
 import { INITIAL_TEMPLATE } from './utils/constants';
 import { generatePlan, summarizeProgress } from './services/geminiService';
 import { initGoogleClient, handleAuthClick, getEventsForDate } from './services/googleCalendar';
 import { updateSectionForDate } from './utils/textManager';
+import { addEventTaskToContent, extractEventName } from './utils/eventTasks';
 import { ViewMode } from './types';
 
 const App: React.FC = () => {
@@ -31,6 +33,11 @@ const App: React.FC = () => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
+  const [addTaskModal, setAddTaskModal] = useState<{
+    isOpen: boolean;
+    dateStr: string;
+    eventRawLine: string;
+  }>({ isOpen: false, dateStr: '', eventRawLine: '' });
   
   // Date Navigation State
   const [selectedDate, setSelectedDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
@@ -149,69 +156,7 @@ const App: React.FC = () => {
 
   // Handle Event Task Addition
   const handleAddEventTask = useCallback((dateStr: string, eventRawLine: string) => {
-    const taskName = prompt("Enter task for this event:");
-    if (!taskName) return;
-
-    setContent(prevContent => {
-      const lines = prevContent.split('\n');
-      
-      // 1. Find the date block start
-      const dateIndex = lines.findIndex(l => l.trim().startsWith(dateStr));
-      if (dateIndex === -1) {
-        console.warn("Date block not found");
-        return prevContent;
-      }
-
-      // 2. Find the event line within that date block using loose matching
-      let targetLineIndex = -1;
-      const trimmedEventRaw = eventRawLine.trim();
-      
-      for (let i = dateIndex; i < lines.length; i++) {
-        const line = lines[i];
-        
-        // Safety check: stop at next date header
-        if (i > dateIndex && line.match(/^\d{4}-\d{2}-\d{2}/)) break;
-
-        if (line === eventRawLine || line.trim() === trimmedEventRaw) {
-             targetLineIndex = i;
-             break;
-        }
-      }
-
-      if (targetLineIndex === -1) {
-          console.warn("Could not find event line:", eventRawLine);
-          return prevContent;
-      }
-
-      // 3. Insert indented task under event
-      const newEventTaskLine = `  - ${taskName}`;
-      lines.splice(targetLineIndex + 1, 0, newEventTaskLine);
-
-      // 4. Add to [DOING] section for that date
-      // We need to find [DOING] again because indices shifted by +1
-      let doingHeaderIndex = -1;
-      for (let i = dateIndex; i < lines.length; i++) {
-         if (lines[i].trim() === '[DOING]') {
-             doingHeaderIndex = i;
-             break;
-         }
-         // Stop search at next date
-         if (i > dateIndex && lines[i].match(/^\d{4}-\d{2}-\d{2}/)) break;
-      }
-
-      const cleanEventName = trimmedEventRaw.replace(/^\d{2}:\d{2}\s?[AP]M\s?-\s?/i, '').trim();
-      const doingItem = `- ${taskName} (from ${cleanEventName})`;
-
-      if (doingHeaderIndex !== -1) {
-          // Insert after [DOING]
-          lines.splice(doingHeaderIndex + 1, 0, doingItem);
-      } else {
-          // If [DOING] missing, we could create it, but for now just warn
-          console.warn("DOING section missing, skipping sync.");
-      }
-
-      return lines.join('\n');
-    });
+    setAddTaskModal({ isOpen: true, dateStr, eventRawLine });
   }, []);
 
   // Handle Toggling items in Visualizer (write back to text)
@@ -375,6 +320,8 @@ const App: React.FC = () => {
             content={content} 
             onChange={setContent} 
             scrollToDate={selectedDate}
+            focusedDate={selectedDate}
+            onAddEventTask={handleAddEventTask}
           />
         </div>
 
@@ -406,6 +353,23 @@ const App: React.FC = () => {
       <SettingsModal 
         isOpen={isSettingsOpen} 
         onClose={() => setIsSettingsOpen(false)} 
+      />
+
+      <AddEventTaskModal
+        isOpen={addTaskModal.isOpen}
+        eventLabel={extractEventName(addTaskModal.eventRawLine || '')}
+        onClose={() => setAddTaskModal({ isOpen: false, dateStr: '', eventRawLine: '' })}
+        onSubmit={(taskName) => {
+          setContent((prev) =>
+            addEventTaskToContent({
+              content: prev,
+              dateStr: addTaskModal.dateStr,
+              eventRawLine: addTaskModal.eventRawLine,
+              taskName
+            })
+          );
+          setAddTaskModal({ isOpen: false, dateStr: '', eventRawLine: '' });
+        }}
       />
     </div>
   );

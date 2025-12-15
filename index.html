@@ -25,6 +25,10 @@
       }
     </script>
     <style>
+      :root {
+        /* Force light form controls even if OS/browser is in dark mode */
+        color-scheme: light;
+      }
       body {
         background-color: #f3f4f6;
         color: #1f2937;
@@ -59,5 +63,6 @@
 </head>
   <body>
     <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
   </body>
 </html>

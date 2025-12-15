@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { SectionType, ParsedSection, ParsedDay, ParsedItem } from '../types';
-import { Calendar, Plus, RefreshCw, Check, CheckSquare, Square, PlusCircle } from 'lucide-react';
+import { Calendar, Plus, RefreshCw, Check, CheckSquare, Square, PlusCircle, Trash2 } from 'lucide-react';
+import { extractTagsFromLine } from '../utils/doingDone.js';
 
 interface VisualizerProps {
   content: string;
@@ -8,6 +9,7 @@ interface VisualizerProps {
   onAddEntry?: (date: string) => void;
   onSyncCalendar?: (date: string) => void;
   onAddEventTask?: (date: string, eventRawText: string) => void;
+  onDeleteEventSubtask?: (date: string, subtaskRawText: string) => void;
   onToggleItem?: (itemRaw: string) => void;
 }
 
@@ -17,6 +19,7 @@ const Visualizer: React.FC<VisualizerProps> = ({
   onAddEntry, 
   onSyncCalendar,
   onAddEventTask,
+  onDeleteEventSubtask,
   onToggleItem
 }) => {
   const parsedData = useMemo(() => {
@@ -115,6 +118,14 @@ const Visualizer: React.FC<VisualizerProps> = ({
 
   const activeDayData = parsedData[focusedDate];
 
+  const renderTodoLine = (rawText: string) => {
+    // Clean UX: never show raw hashtags in the preview.
+    // We strip trailing tags for display, but keep the underlying text intact.
+    const { baseText } = extractTagsFromLine(rawText);
+    const display = baseText || rawText.trim().replace(/^\s*-\s+/, '').replace(/^\s*x\s+/i, '');
+    return <div className="text-sm break-words">{display}</div>;
+  };
+
   const renderSectionColor = (type: SectionType) => {
     switch (type) {
       case SectionType.EVENTS: return 'border-l-4 border-blue-400 bg-blue-50/50';
@@ -174,8 +185,10 @@ const Visualizer: React.FC<VisualizerProps> = ({
               <li key={i} className="flex flex-col gap-1">
                 {/* Main Item Row */}
                 <div className="flex items-start justify-between group/item min-h-[24px] relative">
-                  <div className={`text-sm flex-1 ${item.isCompleted ? 'line-through text-gray-400' : 'text-gray-800'}`}>
-                    {item.text}
+                  <div className={`flex-1 ${item.isCompleted ? 'line-through text-gray-400' : 'text-gray-800'}`}>
+                    {section.type === SectionType.DOING || section.type === SectionType.DONE
+                      ? renderTodoLine(item.text)
+                      : <div className="text-sm">{item.text}</div>}
                   </div>
                   
                   {/* Action Buttons for Events */}
@@ -183,7 +196,6 @@ const Visualizer: React.FC<VisualizerProps> = ({
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        e.preventDefault();
                         onAddEventTask(focusedDate, item.raw);
                       }}
                       className="opacity-0 group-hover/item:opacity-100 transition-opacity text-gray-400 hover:text-blue-600 p-1 z-10 cursor-pointer"
@@ -200,7 +212,7 @@ const Visualizer: React.FC<VisualizerProps> = ({
                     {item.children.map((child, cIdx) => (
                       <li 
                         key={cIdx} 
-                        className="text-xs text-gray-600 flex items-center gap-2 cursor-pointer hover:text-gray-900"
+                        className="text-xs text-gray-600 flex items-center gap-2 cursor-pointer hover:text-gray-900 group/child"
                         onClick={(e) => {
                             e.stopPropagation();
                             if(onToggleItem) onToggleItem(child.raw);
@@ -214,6 +226,18 @@ const Visualizer: React.FC<VisualizerProps> = ({
                          <span className={child.isCompleted ? 'line-through opacity-50' : ''}>
                            {child.text.replace(/^- /, '')}
                          </span>
+                         {onDeleteEventSubtask && (
+                           <button
+                             className="ml-auto opacity-0 group-hover/child:opacity-100 transition-opacity text-gray-300 hover:text-red-500 p-1"
+                             title="Delete subtask"
+                             onClick={(e) => {
+                               e.stopPropagation();
+                               onDeleteEventSubtask(focusedDate, child.raw);
+                             }}
+                           >
+                             <Trash2 className="w-3 h-3" />
+                           </button>
+                         )}
                       </li>
                     ))}
                   </ul>

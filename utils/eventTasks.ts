@@ -1,0 +1,135 @@
+export const normalizeEventLineForMatch = (line: string): string => {
+  return line
+    .trim()
+    .replace(/^\s*x\s+/i, '')
+    .replace(/^\s*-\s+/, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+};
+
+export const extractEventName = (eventLine: string): string => {
+  const cleaned = eventLine
+    .trim()
+    .replace(/^\s*x\s+/i, '')
+    .replace(/^\s*-\s+/, '')
+    .trim();
+
+  // Remove common time prefixes
+  return cleaned
+    .replace(/^\d{1,2}:\d{2}\s*(AM|PM)\s*-\s*/i, '')
+    .replace(/^all day\s*-\s*/i, '')
+    .trim();
+};
+
+export const eventToTag = (eventName: string): string => {
+  const slug = eventName
+    .replace(/[^a-zA-Z0-9\s]/g, '')
+    .trim()
+    .replace(/\s+/g, '_');
+
+  return slug ? `#${slug}` : '#event';
+};
+
+const isDateHeader = (line: string) => /^\d{4}-\d{2}-\d{2}/.test(line.trim());
+const isSectionHeader = (line: string) => /^\[(.*?)\]$/.test(line.trim());
+
+export const addEventTaskToContent = (params: {
+  content: string;
+  dateStr: string;
+  eventRawLine: string;
+  taskName: string;
+}): string => {
+  const { content, dateStr, eventRawLine, taskName } = params;
+
+  const lines = content.split('\n');
+
+  // Find date block
+  let dateIndex = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim().startsWith(dateStr)) {
+      dateIndex = i;
+      break;
+    }
+  }
+  if (dateIndex === -1) return content;
+
+  let blockEnd = lines.length;
+  for (let i = dateIndex + 1; i < lines.length; i++) {
+    if (isDateHeader(lines[i])) {
+      blockEnd = i;
+      break;
+    }
+  }
+
+  // Find the event line within that date block
+  const targetNorm = normalizeEventLineForMatch(eventRawLine);
+  let eventLineIndex = -1;
+  for (let i = dateIndex; i < blockEnd; i++) {
+    const line = lines[i];
+    if (
+      line === eventRawLine ||
+      line.trim() === eventRawLine.trim() ||
+      normalizeEventLineForMatch(line) === targetNorm
+    ) {
+      eventLineIndex = i;
+      break;
+    }
+  }
+  if (eventLineIndex === -1) return content;
+
+  // Insert child task under the event
+  const childLine = `  - ${taskName}`;
+  lines.splice(eventLineIndex + 1, 0, childLine);
+  blockEnd += 1;
+
+  // Find or create [DOING]
+  let doingHeaderIndex = -1;
+  for (let i = dateIndex; i < blockEnd; i++) {
+    if (lines[i].trim() === '[DOING]') {
+      doingHeaderIndex = i;
+      break;
+    }
+  }
+
+  const eventName = extractEventName(eventRawLine);
+  // User request: do not tag DOING items. The relationship is captured by nesting under the event.
+  // (We still keep eventName for potential future UX, but do not write a tag into the file here.)
+  void eventName;
+  const doingItem = `- ${taskName}`;
+
+  if (doingHeaderIndex !== -1) {
+    lines.splice(doingHeaderIndex + 1, 0, doingItem);
+    return lines.join('\n');
+  }
+
+  // If [DOING] missing, insert it after [EVENTS] section if present; otherwise near top of the date block.
+  let insertDoingAt = dateIndex + 1;
+  // Skip separator line if present
+  if (lines[insertDoingAt] && lines[insertDoingAt].trim().startsWith('==')) insertDoingAt += 1;
+
+  let eventsHeaderIndex = -1;
+  for (let i = dateIndex; i < blockEnd; i++) {
+    if (lines[i].trim() === '[EVENTS]') {
+      eventsHeaderIndex = i;
+      break;
+    }
+  }
+  if (eventsHeaderIndex !== -1) {
+    // Insert DOING after end of EVENTS section (before next section header or date)
+    let eventsEnd = blockEnd;
+    for (let i = eventsHeaderIndex + 1; i < blockEnd; i++) {
+      if (isSectionHeader(lines[i]) || isDateHeader(lines[i])) {
+        eventsEnd = i;
+        break;
+      }
+    }
+    insertDoingAt = eventsEnd;
+  }
+
+  const doingBlock = ['[DOING]', doingItem, ''];
+  lines.splice(insertDoingAt, 0, ...doingBlock);
+  return lines.join('\n');
+};
+
+
