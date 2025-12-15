@@ -19,9 +19,10 @@ import SettingsModal from './components/SettingsModal';
 import AddEventTaskModal from './components/AddEventTaskModal';
 import { INITIAL_TEMPLATE } from './utils/constants';
 import { generatePlan, summarizeProgress } from './services/geminiService';
-import { initGoogleClient, handleAuthClick, getEventsForDate } from './services/googleCalendar';
 import { updateSectionForDate } from './utils/textManager';
 import { addEventTaskToContent, extractEventName } from './utils/eventTasks';
+import { deleteEventSubtask } from './utils/doingDone.js';
+import { handleOAuthCallback, fetchEvents, isConnected, OAuthProvider } from './services/oauth';
 import { ViewMode } from './types';
 
 const App: React.FC = () => {
@@ -38,13 +39,24 @@ const App: React.FC = () => {
     dateStr: string;
     eventRawLine: string;
   }>({ isOpen: false, dateStr: '', eventRawLine: '' });
+  const [oauthMessage, setOauthMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   
   // Date Navigation State
   const [selectedDate, setSelectedDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
 
-  // Init Google Client on mount
+  // Handle OAuth callback on mount
   useEffect(() => {
-    initGoogleClient().catch(e => console.warn("Google Client Init:", e));
+    const result = handleOAuthCallback();
+    if (result) {
+      if (result.success) {
+        const providerName = result.provider === 'google' ? 'Google Calendar' : 'Microsoft Outlook';
+        setOauthMessage({ type: 'success', text: `Successfully connected to ${providerName}!` });
+      } else {
+        setOauthMessage({ type: 'error', text: result.error || 'Connection failed' });
+      }
+      // Clear message after 5 seconds
+      setTimeout(() => setOauthMessage(null), 5000);
+    }
   }, []);
 
   // Auto-save logic
@@ -122,12 +134,18 @@ const App: React.FC = () => {
     });
   };
 
-  // Sync Calendar
-  const handleSyncCalendar = useCallback(async (dateStr: string) => {
+  // Generic sync calendar handler
+  const handleSyncCalendar = useCallback(async (provider: OAuthProvider, dateStr: string) => {
+    if (!isConnected(provider)) {
+      const providerName = provider === 'google' ? 'Google Calendar' : 'Microsoft Outlook';
+      alert(`Please connect to ${providerName} in Settings first.`);
+      setIsSettingsOpen(true);
+      return;
+    }
+
     setIsProcessing(true);
     try {
-      await handleAuthClick();
-      const events = await getEventsForDate(dateStr);
+      const events = await fetchEvents(provider, dateStr);
       if (events.length === 0) {
         alert("No events found for " + dateStr);
         return;
@@ -138,16 +156,7 @@ const App: React.FC = () => {
 
     } catch (error: any) {
       console.error("Sync Error:", error);
-      let errorMessage = "Unknown error occurred";
-      if (error instanceof Error) {
-        errorMessage = error.message;
-      } else if (typeof error === 'object') {
-        try {
-            if (error.result?.error?.message) errorMessage = error.result.error.message;
-            else if (error.message) errorMessage = String(error.message);
-            else errorMessage = JSON.stringify(error);
-        } catch (e) { errorMessage = "Error object could not be stringified"; }
-      }
+      const errorMessage = error instanceof Error ? error.message : String(error);
       alert(`Calendar Sync Failed: ${errorMessage}`);
     } finally {
       setIsProcessing(false);
@@ -183,6 +192,10 @@ const App: React.FC = () => {
     });
   }, []);
 
+  const handleDeleteEventSubtask = useCallback((dateStr: string, subtaskRawLine: string) => {
+    setContent((prev) => deleteEventSubtask({ content: prev, dateStr, subtaskRawLine }));
+  }, []);
+
   const handleAiOrganize = useCallback(async () => {
     setIsProcessing(true);
     try {
@@ -209,6 +222,15 @@ const App: React.FC = () => {
 
   return (
     <div className="flex flex-col h-screen w-screen bg-gray-50 text-gray-800 font-sans overflow-hidden">
+      {/* OAuth Success/Error Toast */}
+      {oauthMessage && (
+        <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg text-sm font-medium ${
+          oauthMessage.type === 'success' ? 'bg-green-500 text-white' : 'bg-red-500 text-white'
+        }`}>
+          {oauthMessage.text}
+        </div>
+      )}
+
       {/* Header Toolbar */}
       <header className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-4 shrink-0 shadow-sm z-10">
         <div className="flex items-center gap-3">
@@ -335,8 +357,10 @@ const App: React.FC = () => {
             content={content} 
             focusedDate={selectedDate}
             onAddEntry={handleAddEntry}
-            onSyncCalendar={handleSyncCalendar}
+            onSyncGoogleCalendar={(dateStr) => handleSyncCalendar('google', dateStr)}
+            onSyncOutlookCalendar={(dateStr) => handleSyncCalendar('microsoft', dateStr)}
             onAddEventTask={handleAddEventTask}
+            onDeleteEventSubtask={handleDeleteEventSubtask}
             onToggleItem={handleToggleItem}
           />
         </div>

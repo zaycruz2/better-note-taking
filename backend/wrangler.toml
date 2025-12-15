@@ -1,0 +1,17 @@
+name = "monofocus-oauth"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+# Environment variables (secrets should be set via `wrangler secret put`)
+# Required secrets:
+#   GOOGLE_CLIENT_ID
+#   GOOGLE_CLIENT_SECRET
+#   MICROSOFT_CLIENT_ID
+#   MICROSOFT_CLIENT_SECRET
+
+[vars]
+# Frontend URL for CORS and redirects (change for production)
+FRONTEND_URL = "http://localhost:3000"
+# Microsoft tenant (use "common" for multi-tenant)
+MICROSOFT_TENANT = "common"
+

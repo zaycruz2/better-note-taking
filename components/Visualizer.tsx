@@ -1,13 +1,14 @@
 import React, { useMemo } from 'react';
 import { SectionType, ParsedSection, ParsedDay, ParsedItem } from '../types';
-import { Calendar, Plus, RefreshCw, Check, CheckSquare, Square, PlusCircle, Trash2 } from 'lucide-react';
+import { Calendar, Plus, RefreshCw, Check, CheckSquare, Square, PlusCircle, Trash2, Mail } from 'lucide-react';
 import { extractTagsFromLine } from '../utils/doingDone.js';
 
 interface VisualizerProps {
   content: string;
   focusedDate: string;
   onAddEntry?: (date: string) => void;
-  onSyncCalendar?: (date: string) => void;
+  onSyncGoogleCalendar?: (date: string) => void;
+  onSyncOutlookCalendar?: (date: string) => void;
   onAddEventTask?: (date: string, eventRawText: string) => void;
   onDeleteEventSubtask?: (date: string, subtaskRawText: string) => void;
   onToggleItem?: (itemRaw: string) => void;
@@ -17,7 +18,8 @@ const Visualizer: React.FC<VisualizerProps> = ({
   content, 
   focusedDate, 
   onAddEntry, 
-  onSyncCalendar,
+  onSyncGoogleCalendar,
+  onSyncOutlookCalendar,
   onAddEventTask,
   onDeleteEventSubtask,
   onToggleItem
@@ -169,14 +171,27 @@ const Visualizer: React.FC<VisualizerProps> = ({
             <h3 className="font-bold text-gray-700 tracking-wide text-xs uppercase opacity-70">
               {section.title}
             </h3>
-            {section.type === SectionType.EVENTS && onSyncCalendar && (
-               <button 
-                onClick={() => onSyncCalendar(focusedDate)}
-                className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-white rounded text-blue-500"
-                title="Sync from Google Calendar"
-               >
-                 <RefreshCw className="w-3 h-3" />
-               </button>
+            {section.type === SectionType.EVENTS && (onSyncGoogleCalendar || onSyncOutlookCalendar) && (
+              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                {onSyncGoogleCalendar && (
+                  <button 
+                    onClick={() => onSyncGoogleCalendar(focusedDate)}
+                    className="p-1 hover:bg-white rounded text-blue-500"
+                    title="Sync from Google Calendar"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                  </button>
+                )}
+                {onSyncOutlookCalendar && (
+                  <button 
+                    onClick={() => onSyncOutlookCalendar(focusedDate)}
+                    className="p-1 hover:bg-white rounded text-blue-600"
+                    title="Sync from Outlook Calendar"
+                  >
+                    <Mail className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
             )}
           </div>
           

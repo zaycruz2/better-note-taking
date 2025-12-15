@@ -1,0 +1,12 @@
+# Dependencies
+node_modules/
+
+# Wrangler
+.wrangler/
+
+# Local secrets (contains OAuth credentials)
+.dev.vars
+
+# Logs
+*.log
+
