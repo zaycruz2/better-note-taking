@@ -598,24 +598,17 @@ export default {
         return json(env, { error: msg }, { status: res.status });
       }
 
-      // Format events with time
-      const events = Array.isArray(data?.items) 
-        ? data.items.map((e: any) => {
-            const start = e.start?.dateTime || e.start?.date;
-            let timeString = '';
-            if (start) {
-              if (start.includes('T')) {
-                const dateObj = new Date(start);
-                timeString = dateObj.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
-              } else {
-                timeString = 'All Day';
-              }
-            }
-            const summary = e.summary || 'No Title';
-            return timeString ? `${timeString} - ${summary}` : summary;
-          }).filter((s: any) => typeof s === 'string')
+      // Return structured events; frontend formats times in user's local timezone.
+      const events = Array.isArray(data?.items)
+        ? data.items
+            .map((e: any) => {
+              const start = e.start?.dateTime || e.start?.date || null;
+              const summary = e.summary || 'No Title';
+              return { start, summary };
+            })
+            .filter((e: any) => typeof e?.summary === 'string')
         : [];
-      
+
       return json(env, { events });
     }
 
@@ -661,18 +654,20 @@ export default {
         return json(env, { error: msg }, { status: res.status });
       }
 
-      // Format events with time
+      // Return structured events in UTC; frontend formats times in user's local timezone.
       const events = Array.isArray(data?.value)
-        ? data.value.map((e: any) => {
-            const start = e.start?.dateTime;
-            let timeString = '';
-            if (start) {
-              const dateObj = new Date(start + 'Z');
-              timeString = dateObj.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
-            }
-            const subject = e.subject || 'No Title';
-            return timeString ? `${timeString} - ${subject}` : subject;
-          }).filter((s: any) => typeof s === 'string')
+        ? data.value
+            .map((e: any) => {
+              const raw = e.start?.dateTime || null;
+              // Graph returns dateTime without timezone when Prefer sets timezone.
+              const start =
+                typeof raw === 'string' && raw.length > 0
+                  ? (raw.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(raw) ? raw : `${raw}Z`)
+                  : null;
+              const summary = e.subject || 'No Title';
+              return { start, summary };
+            })
+            .filter((e: any) => typeof e?.summary === 'string')
         : [];
 
       return json(env, { events });
