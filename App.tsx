@@ -16,7 +16,7 @@ import ChatInterface from './components/ChatInterface';
 import SettingsModal from './components/SettingsModal';
 import AddEventTaskModal from './components/AddEventTaskModal';
 import { INITIAL_TEMPLATE, extractDatesFromContent, contentHasDate } from './utils/constants';
-import { updateSectionForDate } from './utils/textManager';
+import { updateSectionForDate, dedupeDateBlocks } from './utils/textManager';
 import { addEventTaskToContent, extractEventName } from './utils/eventTasks';
 import { deleteEventSubtask, deleteEvent } from './utils/doingDone.js';
 import { handleOAuthCallback, fetchEvents, isConnected, OAuthProvider, refreshOAuthStatus } from './services/oauth';
@@ -81,6 +81,99 @@ function setLocalContentRecord(content: string, updatedAtMs: number) {
 }
 
 const App: React.FC = () => {
+  const mergeFetchedEventsPreservingSubtasks = useCallback((params: {
+    prevContent: string;
+    dateStr: string;
+    fetchedTopLevelEvents: string[];
+  }): string[] => {
+    const { prevContent, dateStr, fetchedTopLevelEvents } = params;
+    const lines = (prevContent || '').split('\n');
+
+    // Find date block range
+    let dateIndex = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if ((lines[i] || '').trim().startsWith(dateStr)) {
+        dateIndex = i;
+        break;
+      }
+    }
+    if (dateIndex === -1) {
+      return fetchedTopLevelEvents;
+    }
+    let blockEnd = lines.length;
+    for (let i = dateIndex + 1; i < lines.length; i++) {
+      if (/^\d{4}-\d{2}-\d{2}/.test((lines[i] || '').trim())) {
+        blockEnd = i;
+        break;
+      }
+    }
+
+    // Find EVENTS section
+    let eventsHeader = -1;
+    for (let i = dateIndex; i < blockEnd; i++) {
+      if ((lines[i] || '').trim() === '[EVENTS]') {
+        eventsHeader = i;
+        break;
+      }
+    }
+    if (eventsHeader === -1) return fetchedTopLevelEvents;
+
+    let eventsEnd = blockEnd;
+    for (let i = eventsHeader + 1; i < blockEnd; i++) {
+      const t = (lines[i] || '').trim();
+      if (/^\[(.*?)\]$/.test(t) || /^\d{4}-\d{2}-\d{2}/.test(t)) {
+        eventsEnd = i;
+        break;
+      }
+    }
+
+    // Build map: normalized event name -> { parentLine, children }
+    const childMap = new Map<string, { parentLine: string; children: string[] }>();
+
+    for (let i = eventsHeader + 1; i < eventsEnd; i++) {
+      const raw = lines[i] || '';
+      if (!raw.trim() || raw.trim().startsWith('==')) continue;
+
+      // Top-level event line: not indented
+      if (!(raw.startsWith('  ') || raw.startsWith('\t'))) {
+        const key = extractEventName(raw).toLowerCase();
+        const children: string[] = [];
+        let j = i + 1;
+        while (j < eventsEnd) {
+          const child = lines[j] || '';
+          if (child.startsWith('  ') || child.startsWith('\t')) {
+            children.push(child);
+            j++;
+            continue;
+          }
+          break;
+        }
+        if (children.length > 0) childMap.set(key, { parentLine: raw.trim(), children });
+      }
+    }
+
+    // Merge: fetched events first (with preserved children), then keep unmatched old events that had children.
+    const merged: string[] = [];
+    const usedKeys = new Set<string>();
+
+    for (const ev of fetchedTopLevelEvents) {
+      merged.push(ev);
+      const key = extractEventName(ev).toLowerCase();
+      usedKeys.add(key);
+      const entry = childMap.get(key);
+      if (entry?.children?.length) merged.push(...entry.children);
+    }
+
+    // Preserve orphaned subtasks by keeping the old parent event lines that had children but are no longer in fetched list.
+    for (const [key, entry] of childMap.entries()) {
+      if (usedKeys.has(key)) continue;
+      merged.push(entry.parentLine);
+      merged.push(...entry.children);
+    }
+
+    return merged;
+  }, []);
+
   // Auth state
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -237,6 +330,16 @@ const App: React.FC = () => {
     return () => clearTimeout(timer);
   }, [content]);
 
+  // Repair duplicate day headers once (prevents "notes disappeared" in the visualizer)
+  useEffect(() => {
+    setContent((prev) => {
+      const deduped = dedupeDateBlocks(prev);
+      return deduped === prev ? prev : deduped;
+    });
+    // Only run once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Cloud auto-sync (debounced)
   useEffect(() => {
     if (isHydratingFromCloud) return;
@@ -268,9 +371,17 @@ const App: React.FC = () => {
     // Skip during initial hydration to avoid race conditions
     if (isHydratingFromCloud) return;
     
-    // Check if the selected date exists in content
-    if (!contentHasDate(content, selectedDate)) {
-      // Extract carry-over items from the previous day inline
+    // Do the existence check *inside* setContent so it is atomic and can't race with other updates.
+    setContent(prev => {
+      // First dedupe to clean up any duplicates before checking
+      const deduped = dedupeDateBlocks(prev);
+      
+      if (contentHasDate(deduped, selectedDate)) {
+        // Return deduped only if it changed
+        return deduped === prev ? prev : deduped;
+      }
+
+      // Extract carry-over items from the previous day inline (based on latest content)
       const getCarryOverItemsInline = (fullContent: string, currentDateStr: string): string[] => {
         const dateRegex = /^(\d{4}-\d{2}-\d{2})/gm;
         const indices: {date: string, index: number}[] = [];
@@ -282,9 +393,9 @@ const App: React.FC = () => {
         const currentIndex = indices.findIndex(i => i.date === currentDateStr);
         let prevBlockContent = "";
         if (currentIndex > 0) {
-          const prev = indices[currentIndex - 1];
-          const curr = indices[currentIndex];
-          prevBlockContent = fullContent.substring(prev.index, curr.index);
+          const prevIdx = indices[currentIndex - 1];
+          const currIdx = indices[currentIndex];
+          prevBlockContent = fullContent.substring(prevIdx.index, currIdx.index);
         } else if (currentIndex === -1 && indices.length > 0) {
           const last = indices[indices.length - 1];
           prevBlockContent = fullContent.substring(last.index);
@@ -297,16 +408,13 @@ const App: React.FC = () => {
         return lines.filter(l => !l.toLowerCase().startsWith('x '));
       };
 
-      const carryOver = getCarryOverItemsInline(content, selectedDate);
+      const carryOver = getCarryOverItemsInline(deduped, selectedDate);
       const doingContent = carryOver.length > 0 ? carryOver.join('\n') : '';
       const newEntry = `\n\n${selectedDate}\n========================================\n[EVENTS]\n\n[DOING]\n${doingContent}\n\n[DONE]\n\n[NOTES]\n`;
-      
-      setContent(prev => {
-        if (prev.includes(selectedDate)) return prev;
-        return prev + newEntry;
-      });
-    }
-  }, [selectedDate, content, isHydratingFromCloud]);
+
+      return deduped + newEntry;
+    });
+  }, [selectedDate, isHydratingFromCloud]);
 
   // Handle Date Navigation
   const changeDate = (days: number) => {
@@ -357,14 +465,18 @@ const App: React.FC = () => {
 
   // Add Entry for a date if it doesn't exist
   const handleAddEntry = (dateStr: string) => {
-    const carryOver = getCarryOverItems(content, dateStr);
-    const doingContent = carryOver.length > 0 ? carryOver.join('\n') : '';
-
-    const newEntry = `\n\n${dateStr}\n========================================\n[EVENTS]\n\n[DOING]\n${doingContent}\n\n[DONE]\n\n[NOTES]\n`;
-    
     setContent(prev => {
-        if (prev.includes(dateStr)) return prev;
-        return prev + newEntry; 
+        // First dedupe to clean up any duplicates
+        const deduped = dedupeDateBlocks(prev);
+        if (contentHasDate(deduped, dateStr)) {
+          return deduped === prev ? prev : deduped;
+        }
+        
+        const carryOver = getCarryOverItems(deduped, dateStr);
+        const doingContent = carryOver.length > 0 ? carryOver.join('\n') : '';
+        const newEntry = `\n\n${dateStr}\n========================================\n[EVENTS]\n\n[DOING]\n${doingContent}\n\n[DONE]\n\n[NOTES]\n`;
+        
+        return deduped + newEntry; 
     });
   };
 
@@ -380,13 +492,27 @@ const App: React.FC = () => {
         return true; // Success, but no events
       }
       
-      setContent(prevContent => updateSectionForDate(prevContent, dateStr, 'EVENTS', events));
+      // Ensure the date block exists before updating the section (prevents duplicate date blocks)
+      // Also run dedupe to clean up any existing duplicates
+      setContent(prevContent => {
+        // First dedupe to fix any existing duplicates
+        const deduped = dedupeDateBlocks(prevContent);
+        const withDate = contentHasDate(deduped, dateStr)
+          ? deduped
+          : deduped + `\n\n${dateStr}\n========================================\n[EVENTS]\n\n[DOING]\n\n[DONE]\n\n[NOTES]\n`;
+        const mergedEvents = mergeFetchedEventsPreservingSubtasks({
+          prevContent: withDate,
+          dateStr,
+          fetchedTopLevelEvents: events,
+        });
+        return updateSectionForDate(withDate, dateStr, 'EVENTS', mergedEvents);
+      });
       return true;
     } catch (error: any) {
       console.error("Silent sync error:", error);
       return false;
     }
-  }, []);
+  }, [mergeFetchedEventsPreservingSubtasks]);
 
   // Generic sync calendar handler (with user feedback)
   const handleSyncCalendar = useCallback(async (provider: OAuthProvider, dateStr: string) => {
@@ -405,8 +531,21 @@ const App: React.FC = () => {
         return;
       }
       
-      const updatedContent = updateSectionForDate(content, dateStr, 'EVENTS', events);
-      setContent(updatedContent);
+      // Same as silent path: update deterministically and ensure date exists
+      // Also run dedupe to clean up any existing duplicates
+      setContent(prevContent => {
+        // First dedupe to fix any existing duplicates
+        const deduped = dedupeDateBlocks(prevContent);
+        const withDate = contentHasDate(deduped, dateStr)
+          ? deduped
+          : deduped + `\n\n${dateStr}\n========================================\n[EVENTS]\n\n[DOING]\n\n[DONE]\n\n[NOTES]\n`;
+        const mergedEvents = mergeFetchedEventsPreservingSubtasks({
+          prevContent: withDate,
+          dateStr,
+          fetchedTopLevelEvents: events,
+        });
+        return updateSectionForDate(withDate, dateStr, 'EVENTS', mergedEvents);
+      });
 
     } catch (error: any) {
       console.error("Sync Error:", error);
@@ -415,7 +554,7 @@ const App: React.FC = () => {
     } finally {
       setIsProcessing(false);
     }
-  }, [content]);
+  }, [mergeFetchedEventsPreservingSubtasks]);
 
   // Auto-refresh events when date changes (if calendar is connected)
   useEffect(() => {

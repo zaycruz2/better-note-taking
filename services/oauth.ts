@@ -118,10 +118,38 @@ export const refreshOAuthStatus = async (): Promise<{ google: boolean; microsoft
 
 // ===== API Calls =====
 
+type EventsApiResponse =
+  | { events: string[] }
+  | { events: Array<{ start: string | null; summary: string }> };
+
+function formatEventLine(evt: { start: string | null; summary: string }): string {
+  const summary = evt.summary || 'No Title';
+  const start = evt.start;
+  if (!start) return summary;
+  // All-day events come back as YYYY-MM-DD
+  if (!start.includes('T')) return `All Day - ${summary}`;
+  const d = new Date(start);
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return `${time} - ${summary}`;
+}
+
 export const fetchEvents = async (provider: OAuthProvider, dateStr: string): Promise<string[]> => {
   const accessToken = await getSupabaseAccessToken();
 
-  const res = await fetch(`${BACKEND_URL}/api/${provider}/events?date=${encodeURIComponent(dateStr)}`, {
+  // Compute local day boundaries and pass to backend
+  // This ensures we query for events in the user's actual day, not UTC
+  const localStart = new Date(`${dateStr}T00:00:00`);
+  const localEnd = new Date(`${dateStr}T23:59:59.999`);
+  const timeMin = localStart.toISOString();
+  const timeMax = localEnd.toISOString();
+
+  const params = new URLSearchParams({
+    date: dateStr,
+    timeMin,
+    timeMax,
+  });
+
+  const res = await fetch(`${BACKEND_URL}/api/${provider}/events?${params.toString()}`, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
     },
@@ -136,8 +164,12 @@ export const fetchEvents = async (provider: OAuthProvider, dateStr: string): Pro
     throw new Error(data.error || `Failed to fetch ${provider} events`);
   }
 
-  const data = await res.json() as { events: string[] };
-  return data.events || [];
+  const data = await res.json() as EventsApiResponse;
+  const events = (data as any)?.events;
+  if (!Array.isArray(events)) return [];
+  if (events.length === 0) return [];
+  if (typeof events[0] === 'string') return events as string[];
+  return (events as Array<{ start: string | null; summary: string }>).map(formatEventLine);
 };
 
 // ===== Disconnect =====

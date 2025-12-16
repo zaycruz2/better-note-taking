@@ -54,6 +54,14 @@ export async function signInWithGoogle(): Promise<{ error: Error | null }> {
     provider: 'google',
     options: {
       redirectTo: window.location.origin,
+      // Request calendar permission at the same time as account sign-in
+      // so the user doesn't have to go through a second Google OAuth flow.
+      scopes: 'https://www.googleapis.com/auth/calendar.readonly',
+      queryParams: {
+        access_type: 'offline',
+        prompt: 'consent',
+        include_granted_scopes: 'true',
+      },
     },
   });
   return { error: error as Error | null };

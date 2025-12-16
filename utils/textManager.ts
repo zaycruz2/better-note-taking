@@ -86,3 +86,138 @@ export const updateSectionForDate = (
     return [...before, ...newBlock, ...after].join('\n');
   }
 };
+
+/**
+ * Dedupe duplicate date blocks (YYYY-MM-DD) by merging their sections.
+ * This repairs cases where the same day header was accidentally inserted twice.
+ */
+export function dedupeDateBlocks(content: string): string {
+  if (!content || typeof content !== 'string') return content;
+  const lines = content.split('\n');
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+  const headerRegex = /^\[(.*?)\]$/;
+
+  type SectionMap = Map<string, string[]>;
+  type DayAcc = {
+    date: string;
+    separator: string;
+    sections: SectionMap;
+    order: string[]; // section header order encountered
+  };
+
+  const days = new Map<string, DayAcc>();
+  const dayOrder: string[] = [];
+
+  let i = 0;
+  while (i < lines.length) {
+    const maybeDate = (lines[i] || '').trim();
+    if (!dateRegex.test(maybeDate)) {
+      i++;
+      continue;
+    }
+
+    const date = maybeDate;
+    const startIdx = i;
+    i++;
+
+    // Separator line (optional)
+    let separator = '========================================';
+    if (i < lines.length && (lines[i] || '').trim().startsWith('==')) {
+      separator = (lines[i] || '').trim();
+      i++;
+    }
+
+    // Collect until next date header
+    const blockLines: string[] = [];
+    while (i < lines.length) {
+      const t = (lines[i] || '').trim();
+      if (dateRegex.test(t)) break;
+      blockLines.push(lines[i] || '');
+      i++;
+    }
+
+    // Parse sections within block
+    const sections: SectionMap = new Map();
+    const order: string[] = [];
+    let currentHeader: string | null = null;
+
+    const ensureSection = (h: string) => {
+      if (!sections.has(h)) sections.set(h, []);
+      if (!order.includes(h)) order.push(h);
+    };
+
+    for (const raw of blockLines) {
+      const t = (raw || '').trim();
+      const m = t.match(headerRegex);
+      if (m) {
+        currentHeader = `[${m[1].toUpperCase()}]`;
+        ensureSection(currentHeader);
+        continue;
+      }
+      if (currentHeader) {
+        sections.get(currentHeader)!.push(raw);
+      }
+    }
+
+    // Merge into accumulator
+    const existing = days.get(date);
+    if (!existing) {
+      days.set(date, { date, separator, sections, order });
+      dayOrder.push(date);
+    } else {
+      // Prefer existing separator; just merge sections
+      for (const h of order) {
+        const incoming = sections.get(h) || [];
+        if (!existing.sections.has(h)) {
+          existing.sections.set(h, [...incoming]);
+          existing.order.push(h);
+          continue;
+        }
+        const cur = existing.sections.get(h)!;
+        // Append non-duplicate lines (exact match) preserving order
+        for (const line of incoming) {
+          if (line === '') {
+            cur.push(line);
+            continue;
+          }
+          if (!cur.includes(line)) cur.push(line);
+        }
+      }
+    }
+  }
+
+  // If no dates found or no duplicates, return original
+  if (dayOrder.length === 0) return content;
+
+  // Rebuild content in the original day encounter order
+  const rebuilt: string[] = [];
+  for (const date of dayOrder) {
+    const acc = days.get(date);
+    if (!acc) continue;
+    rebuilt.push(date);
+    rebuilt.push(acc.separator);
+
+    // Canonical section ordering preference
+    const preferred = ['[EVENTS]', '[DOING]', '[BACKLOG]', '[DONE]', '[NOTES]'];
+    const headers = [
+      ...preferred.filter((h) => acc.sections.has(h)),
+      ...acc.order.filter((h) => !preferred.includes(h)),
+    ];
+
+    for (const h of headers) {
+      rebuilt.push(h);
+      const body = acc.sections.get(h) || [];
+      // Trim leading blank lines but preserve internal formatting
+      let started = false;
+      for (const line of body) {
+        if (!started && (line || '').trim() === '') continue;
+        started = true;
+        rebuilt.push(line);
+      }
+      rebuilt.push(''); // blank line between sections
+    }
+    rebuilt.push(''); // blank line between days
+  }
+
+  return rebuilt.join('\n');
+}

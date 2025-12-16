@@ -69,10 +69,29 @@ function isValidDateStr(dateStr: string): boolean {
 }
 
 function getDayRangeUtc(dateStr: string): { startIso: string; endIso: string } {
+  // Default fallback - UTC midnight to midnight
   const start = new Date(`${dateStr}T00:00:00.000Z`);
   const end = new Date(start);
   end.setUTCDate(end.getUTCDate() + 1);
   return { startIso: start.toISOString(), endIso: end.toISOString() };
+}
+
+function getTimeRangeFromParams(url: URL, dateStr: string): { startIso: string; endIso: string } {
+  // Use timeMin/timeMax from query params if provided (local time from frontend)
+  const timeMin = url.searchParams.get('timeMin');
+  const timeMax = url.searchParams.get('timeMax');
+  
+  if (timeMin && timeMax) {
+    // Validate ISO strings
+    const minDate = new Date(timeMin);
+    const maxDate = new Date(timeMax);
+    if (!isNaN(minDate.getTime()) && !isNaN(maxDate.getTime())) {
+      return { startIso: minDate.toISOString(), endIso: maxDate.toISOString() };
+    }
+  }
+  
+  // Fallback to UTC day range
+  return getDayRangeUtc(dateStr);
 }
 
 // ===== JWT Verification =====
@@ -407,6 +426,32 @@ export default {
       return json(env, { success: true });
     }
 
+    // ===== OAuth Link (from Supabase Google session) =====
+    // This enables "Sign in with Google" to also provision Calendar access
+    // without a second OAuth consent flow.
+    if (path === '/api/oauth/link/google' && request.method === 'POST') {
+      const token = getBearerToken(request);
+      if (!token) return json(env, { error: 'Missing Authorization' }, { status: 401 });
+
+      const jwtPayload = await verifySupabaseJwt(env, token);
+      if (!jwtPayload) return json(env, { error: 'Invalid token' }, { status: 401 });
+
+      const body = (await request.json().catch(() => ({}))) as any;
+      const refreshToken = typeof body?.refresh_token === 'string' ? body.refresh_token : '';
+      const accessToken = typeof body?.access_token === 'string' ? body.access_token : null;
+      const expiresAt =
+        typeof body?.expires_at === 'string' && body.expires_at.length > 0 ? body.expires_at : null;
+
+      if (!refreshToken) {
+        return json(env, { error: 'Missing refresh_token' }, { status: 400 });
+      }
+
+      const ok = await upsertToken(env, jwtPayload.sub, 'google', refreshToken, accessToken, expiresAt);
+      if (!ok) return json(env, { error: 'Failed to store tokens' }, { status: 500 });
+
+      return json(env, { success: true });
+    }
+
     // ===== OAuth: Google Calendar =====
     if (path === '/auth/google/start') {
       const token = getBearerToken(request);
@@ -575,7 +620,7 @@ export default {
         return json(env, { error: 'Not connected to Google Calendar', needsAuth: true }, { status: 401 });
       }
 
-      const { startIso, endIso } = getDayRangeUtc(dateStr);
+      const { startIso, endIso } = getTimeRangeFromParams(url, dateStr);
       const apiUrl = new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events');
       apiUrl.search = new URLSearchParams({
         timeMin: startIso,
@@ -628,7 +673,7 @@ export default {
         return json(env, { error: 'Not connected to Microsoft Outlook', needsAuth: true }, { status: 401 });
       }
 
-      const { startIso, endIso } = getDayRangeUtc(dateStr);
+      const { startIso, endIso } = getTimeRangeFromParams(url, dateStr);
       const apiUrl = new URL('https://graph.microsoft.com/v1.0/me/calendarView');
       apiUrl.search = new URLSearchParams({
         startDateTime: startIso,

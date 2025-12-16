@@ -18,6 +18,7 @@ const Editor: React.FC<EditorProps> = ({ content, onChange, className = '', scro
   const [filteredEvents, setFilteredEvents] = useState<string[]>([]);
   const [filteredDoing, setFilteredDoing] = useState<string[]>([]);
   const [commandMode, setCommandMode] = useState<'event' | 'done' | 'subtask'>('event');
+  const [commandDate, setCommandDate] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [cursorIndex, setCursorIndex] = useState(0);
 
@@ -159,6 +160,7 @@ const Editor: React.FC<EditorProps> = ({ content, onChange, className = '', scro
       if (events.length > 0) {
         setFilteredEvents(events);
         setCommandMode('event');
+        setCommandDate(getCurrentDayDate(val, selStart) || focusedDate);
         setSelectedIndex(0);
         const coords = getCaretCoordinates();
         setCommandPosition(coords);
@@ -170,6 +172,7 @@ const Editor: React.FC<EditorProps> = ({ content, onChange, className = '', scro
       if (events.length > 0) {
         setFilteredEvents(events);
         setCommandMode('subtask');
+        setCommandDate(getCurrentDayDate(val, selStart) || focusedDate);
         setSelectedIndex(0);
         const coords = getCaretCoordinates();
         setCommandPosition(coords);
@@ -183,10 +186,12 @@ const Editor: React.FC<EditorProps> = ({ content, onChange, className = '', scro
         // Build the menu from content *without* the /done token so the selected line matches
         // what will exist after we strip the command from the editor.
         const valWithoutCommand = val.substring(0, selStart - 5) + val.substring(selStart);
-        const doing = getDoingItemsForDate(valWithoutCommand, focusedDate).filter(Boolean);
+        const dateAtCursor = getCurrentDayDate(valWithoutCommand, selStart - 5) || focusedDate;
+        const doing = getDoingItemsForDate(valWithoutCommand, dateAtCursor).filter(Boolean);
         if (doing.length > 0) {
           setFilteredDoing(doing);
           setCommandMode('done');
+          setCommandDate(dateAtCursor);
           setSelectedIndex(0);
           const coords = getCaretCoordinates();
           setCommandPosition(coords);
@@ -272,7 +277,8 @@ const Editor: React.FC<EditorProps> = ({ content, onChange, className = '', scro
     setShowCommandMenu(false);
 
     // Open the existing modal flow (owned by App) for the chosen event
-    if (onAddEventTask) onAddEventTask(focusedDate, eventLine);
+    const dateForCommand = commandDate || getCurrentDayDate(withoutTrigger, textBefore.length) || focusedDate;
+    if (onAddEventTask) onAddEventTask(dateForCommand, eventLine);
 
     requestAnimationFrame(() => {
       textarea.focus();
@@ -295,9 +301,10 @@ const Editor: React.FC<EditorProps> = ({ content, onChange, className = '', scro
     // strip it so we can match the line inside `withoutTrigger`.
     const cleanedSelected = doingRawLine.replace(/\s\/done\s*$/i, '');
 
+    const dateForCommand = commandDate || getCurrentDayDate(withoutTrigger, textBefore.length) || focusedDate;
     const newContent = moveDoingItemToDone({
       content: withoutTrigger,
-      dateStr: focusedDate,
+      dateStr: dateForCommand,
       doingRawLine: cleanedSelected
     });
 

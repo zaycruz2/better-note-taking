@@ -44,39 +44,50 @@ export const addEventTaskToContent = (params: {
 
   const lines = content.split('\n');
 
-  // Find date block
-  let dateIndex = -1;
+  // Find ALL date blocks matching dateStr (handles duplicate date headers)
+  const dateBlocks: { start: number; end: number }[] = [];
   for (let i = 0; i < lines.length; i++) {
     if (lines[i].trim().startsWith(dateStr)) {
-      dateIndex = i;
-      break;
+      const start = i;
+      let end = lines.length;
+      for (let j = i + 1; j < lines.length; j++) {
+        if (isDateHeader(lines[j])) {
+          end = j;
+          break;
+        }
+      }
+      dateBlocks.push({ start, end });
+      i = end - 1; // Skip to end of this block
     }
   }
-  if (dateIndex === -1) return content;
+  
+  if (dateBlocks.length === 0) return content;
 
-  let blockEnd = lines.length;
-  for (let i = dateIndex + 1; i < lines.length; i++) {
-    if (isDateHeader(lines[i])) {
-      blockEnd = i;
-      break;
-    }
-  }
-
-  // Find the event line within that date block
+  // Search ALL matching date blocks for the event line
   const targetNorm = normalizeEventLineForMatch(eventRawLine);
   let eventLineIndex = -1;
-  for (let i = dateIndex; i < blockEnd; i++) {
-    const line = lines[i];
-    if (
-      line === eventRawLine ||
-      line.trim() === eventRawLine.trim() ||
-      normalizeEventLineForMatch(line) === targetNorm
-    ) {
-      eventLineIndex = i;
-      break;
+  let blockEnd = lines.length;
+  
+  for (const block of dateBlocks) {
+    for (let i = block.start; i < block.end; i++) {
+      const line = lines[i];
+      if (
+        line === eventRawLine ||
+        line.trim() === eventRawLine.trim() ||
+        normalizeEventLineForMatch(line) === targetNorm
+      ) {
+        eventLineIndex = i;
+        blockEnd = block.end;
+        break;
+      }
     }
+    if (eventLineIndex !== -1) break;
   }
+  
   if (eventLineIndex === -1) return content;
+  
+  // Use the block that contains the found event
+  const dateIndex = dateBlocks.find(b => eventLineIndex >= b.start && eventLineIndex < b.end)?.start ?? dateBlocks[0].start;
 
   // Insert child task under the event
   const childLine = `  - ${taskName}`;
