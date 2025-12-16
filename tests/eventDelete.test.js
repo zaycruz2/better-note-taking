@@ -105,3 +105,4 @@ test('deleteEvent works with different date blocks', () => {
   assert.doesNotMatch(out, /Today Standup/);
   assert.match(out, /Today Session/);
 });
+

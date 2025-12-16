@@ -7,7 +7,8 @@ import {
   Calendar as CalendarIcon,
   ChevronLeft,
   ChevronRight,
-  Settings
+  Settings,
+  AlertTriangle
 } from 'lucide-react';
 import Editor from './components/Editor';
 import Visualizer from './components/Visualizer';
@@ -19,11 +20,52 @@ import { updateSectionForDate } from './utils/textManager';
 import { addEventTaskToContent, extractEventName } from './utils/eventTasks';
 import { deleteEventSubtask, deleteEvent } from './utils/doingDone.js';
 import { handleOAuthCallback, fetchEvents, isConnected, OAuthProvider } from './services/oauth';
+import {
+  getSupabase,
+  isSupabaseConfigured,
+  getSession,
+  signInAnonymously,
+  isAnonymousUser,
+  fetchNote,
+  upsertNote,
+  resolveInitialContent,
+} from './services/supabaseClient';
+import type { Session, User } from '@supabase/supabase-js';
 import { ViewMode } from './types';
 
+const CONTENT_STORAGE_KEY = 'monofocus_content';
+const CONTENT_UPDATED_AT_KEY = 'monofocus_content_updated_at';
+
+function getLocalContentRecord() {
+  let content = '';
+  let updatedAt = 0;
+  try {
+    content = localStorage.getItem(CONTENT_STORAGE_KEY) || '';
+  } catch { content = ''; }
+  try {
+    updatedAt = Number.parseInt(localStorage.getItem(CONTENT_UPDATED_AT_KEY) || '0', 10) || 0;
+  } catch { updatedAt = 0; }
+  return { content, updatedAt };
+}
+
+function setLocalContentRecord(content: string, updatedAtMs: number) {
+  localStorage.setItem(CONTENT_STORAGE_KEY, content);
+  localStorage.setItem(CONTENT_UPDATED_AT_KEY, String(updatedAtMs));
+}
+
 const App: React.FC = () => {
+  // Auth state
+  const [session, setSession] = useState<Session | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  // Sync state
+  const [lastCloudSyncAt, setLastCloudSyncAt] = useState<number | null>(null);
+  const [cloudError, setCloudError] = useState<string | null>(null);
+  const [isHydratingFromCloud, setIsHydratingFromCloud] = useState(false);
+
   const [content, setContent] = useState<string>(() => {
-    return localStorage.getItem('monofocus_content') || INITIAL_TEMPLATE;
+    return localStorage.getItem(CONTENT_STORAGE_KEY) || INITIAL_TEMPLATE;
   });
   const [viewMode, setViewMode] = useState<ViewMode>(ViewMode.SPLIT);
   const [isChatOpen, setIsChatOpen] = useState(false);
@@ -40,7 +82,7 @@ const App: React.FC = () => {
   // Date Navigation State
   const [selectedDate, setSelectedDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
 
-  // Handle OAuth callback on mount
+  // Handle calendar OAuth callback on mount
   useEffect(() => {
     const result = handleOAuthCallback();
     if (result) {
@@ -50,19 +92,130 @@ const App: React.FC = () => {
       } else {
         setOauthMessage({ type: 'error', text: result.error || 'Connection failed' });
       }
-      // Clear message after 5 seconds
       setTimeout(() => setOauthMessage(null), 5000);
     }
   }, []);
 
-  // Auto-save logic
+  // Initialize Supabase auth
+  useEffect(() => {
+    if (!isSupabaseConfigured()) {
+      setAuthLoading(false);
+      return;
+    }
+
+    let mounted = true;
+
+    const initAuth = async () => {
+      try {
+        // Check for existing session
+        const existingSession = await getSession();
+        if (existingSession) {
+          if (mounted) setSession(existingSession);
+        } else {
+          // Auto sign-in anonymously for new users
+          const { user, error } = await signInAnonymously();
+          if (error) {
+            console.error('Anonymous sign-in failed:', error);
+            if (mounted) setAuthError(error.message);
+          } else {
+            // Session will be set by the auth listener
+          }
+        }
+      } catch (e: any) {
+        console.error('Auth init error:', e);
+        if (mounted) setAuthError(e?.message || String(e));
+      } finally {
+        if (mounted) setAuthLoading(false);
+      }
+    };
+
+    // Listen for auth state changes
+    const { data: { subscription } } = getSupabase().auth.onAuthStateChange((_event, newSession) => {
+      if (mounted) setSession(newSession);
+    });
+
+    initAuth();
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  // Cloud hydration when session is available
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    if (!isSupabaseConfigured()) return;
+
+    let cancelled = false;
+
+    (async () => {
+      setIsHydratingFromCloud(true);
+      setCloudError(null);
+      try {
+        const local = getLocalContentRecord();
+        const remote = await fetchNote(session.user.id);
+
+        const remoteUpdatedAt = remote?.updated_at ? new Date(remote.updated_at).getTime() : 0;
+
+        const chosen = resolveInitialContent({
+          localContent: local.content,
+          localUpdatedAt: local.updatedAt,
+          remoteContent: remote?.content ?? '',
+          remoteUpdatedAt,
+        });
+
+        if (cancelled) return;
+
+        if (chosen.source === 'remote' && chosen.content) {
+          setLocalContentRecord(chosen.content, chosen.updatedAt || Date.now());
+          setContent(chosen.content);
+          setLastCloudSyncAt(chosen.updatedAt || null);
+        } else if (chosen.source === 'local' && local.content) {
+          // Seed the cloud if it doesn't have anything yet
+          if (!remote) {
+            const saved = await upsertNote(session.user.id, local.content);
+            if (!cancelled) setLastCloudSyncAt(new Date(saved.updated_at).getTime());
+          }
+        }
+      } catch (e: any) {
+        if (!cancelled) setCloudError(e?.message || String(e));
+      } finally {
+        if (!cancelled) setIsHydratingFromCloud(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [session?.user?.id]);
+
+  // Auto-save to localStorage
   useEffect(() => {
     const timer = setTimeout(() => {
-      localStorage.setItem('monofocus_content', content);
+      const now = Date.now();
+      setLocalContentRecord(content, now);
       setLastSaved(new Date());
     }, 1000);
     return () => clearTimeout(timer);
   }, [content]);
+
+  // Cloud auto-sync (debounced)
+  useEffect(() => {
+    if (isHydratingFromCloud) return;
+    if (!session?.user?.id) return;
+    if (!isSupabaseConfigured()) return;
+
+    const timer = setTimeout(async () => {
+      try {
+        setCloudError(null);
+        const saved = await upsertNote(session.user.id, content);
+        setLastCloudSyncAt(new Date(saved.updated_at).getTime());
+      } catch (e: any) {
+        setCloudError(e?.message || String(e));
+      }
+    }, 2000);
+
+    return () => clearTimeout(timer);
+  }, [content, session?.user?.id, isHydratingFromCloud]);
 
   // Handle Date Navigation
   const changeDate = (days: number) => {
@@ -79,7 +232,6 @@ const App: React.FC = () => {
 
   // Helper to extract uncompleted items from a previous date
   const getCarryOverItems = (fullContent: string, currentDateStr: string): string[] => {
-    // Split into dates
     const dateRegex = /^(\d{4}-\d{2}-\d{2})/gm;
     const indices: {date: string, index: number}[] = [];
     let match;
@@ -87,27 +239,22 @@ const App: React.FC = () => {
         indices.push({ date: match[1], index: match.index });
     }
 
-    // Sort by index
     indices.sort((a, b) => a.index - b.index);
 
-    // Find the date immediately before current
     const currentIndex = indices.findIndex(i => i.date === currentDateStr);
     
     let prevBlockContent = "";
     if (currentIndex > 0) {
-        // There is a date strictly before this one in the file
         const prev = indices[currentIndex - 1];
         const curr = indices[currentIndex];
         prevBlockContent = fullContent.substring(prev.index, curr.index);
     } else if (currentIndex === -1 && indices.length > 0) {
-        // Current date doesn't exist yet, so the "previous" is the last one in file
         const last = indices[indices.length - 1];
         prevBlockContent = fullContent.substring(last.index);
     } else {
         return [];
     }
 
-    // Extract [DOING] from prevBlock
     const doingMatch = prevBlockContent.match(/\[DOING\]([\s\S]*?)(\[|$)/);
     if (!doingMatch) return [];
 
@@ -168,17 +315,13 @@ const App: React.FC = () => {
   const handleToggleItem = useCallback((itemRaw: string) => {
     setContent(prev => {
         const lines = prev.split('\n');
-        // We use strict equality for lines to avoid replacing duplicates wrong
         const index = lines.findIndex(l => l === itemRaw);
         
         if (index !== -1) {
             const line = lines[index];
             if (line.trim().toLowerCase().startsWith('x ')) {
-                // Uncheck
-                // Regex to remove 'x ' case insensitively but preserve leading space
                 lines[index] = line.replace(/x /i, '');
             } else {
-                // Check
                 const spaces = line.match(/^\s*/)?.[0] || '';
                 lines[index] = spaces + 'x ' + line.trim();
             }
@@ -196,8 +339,21 @@ const App: React.FC = () => {
     setContent((prev) => deleteEvent({ content: prev, dateStr, eventRawLine }));
   }, []);
 
+  // Derived state
+  const user = session?.user ?? null;
+  const isAnonymous = isAnonymousUser(user);
+  const showAnonymousBanner = isSupabaseConfigured() && isAnonymous && !authLoading;
+
   return (
     <div className="flex flex-col h-screen w-screen bg-gray-50 text-gray-800 font-sans overflow-hidden">
+      {/* Anonymous User Banner */}
+      {showAnonymousBanner && (
+        <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center justify-center gap-2 text-sm text-amber-800">
+          <AlertTriangle className="w-4 h-4" />
+          <span>You're using a temporary session. <button onClick={() => setIsSettingsOpen(true)} className="underline font-medium hover:text-amber-900">Create an account</button> to sync across browsers/devices.</span>
+        </div>
+      )}
+
       {/* OAuth Success/Error Toast */}
       {oauthMessage && (
         <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg text-sm font-medium ${
@@ -333,7 +489,14 @@ const App: React.FC = () => {
       
       <SettingsModal 
         isOpen={isSettingsOpen} 
-        onClose={() => setIsSettingsOpen(false)} 
+        onClose={() => setIsSettingsOpen(false)}
+        user={user}
+        isAnonymous={isAnonymous}
+        authLoading={authLoading}
+        lastCloudSyncAt={lastCloudSyncAt}
+        cloudError={cloudError}
+        isHydratingFromCloud={isHydratingFromCloud}
+        onSessionChange={(newSession) => setSession(newSession)}
       />
 
       <AddEventTaskModal

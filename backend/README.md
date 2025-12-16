@@ -118,3 +118,4 @@ Check that `FRONTEND_URL` in `wrangler.toml` matches your frontend's origin exac
 ### Token expired
 Access tokens expire after ~1 hour. The frontend will detect this and prompt re-authentication.
 
+
