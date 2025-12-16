@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient, Session, User } from '@supabase/supabase-js';
+import { isEmptyTemplate } from '../utils/constants';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY || '';
@@ -128,8 +129,13 @@ export function resolveInitialContent({
   remoteContent: string;
   remoteUpdatedAt: number;
 }): { source: 'none' | 'local' | 'remote'; content: string; updatedAt: number } {
-  const hasRemote = typeof remoteContent === 'string' && remoteContent.length > 0;
-  const hasLocal = typeof localContent === 'string' && localContent.length > 0;
+  // Treat empty templates as having no real content
+  // This prevents a fresh template from overriding real cloud notes
+  const localIsEmpty = !localContent || isEmptyTemplate(localContent);
+  const remoteIsEmpty = !remoteContent || isEmptyTemplate(remoteContent);
+
+  const hasRemote = !remoteIsEmpty;
+  const hasLocal = !localIsEmpty;
 
   if (!hasRemote && !hasLocal) {
     return { source: 'none', content: '', updatedAt: 0 };
@@ -141,7 +147,7 @@ export function resolveInitialContent({
     return { source: 'local', content: localContent, updatedAt: localUpdatedAt || 0 };
   }
 
-  // Both exist: choose the newer one.
+  // Both have real content: choose the newer one.
   if (remoteUpdatedAt > localUpdatedAt) {
     return { source: 'remote', content: remoteContent, updatedAt: remoteUpdatedAt };
   }

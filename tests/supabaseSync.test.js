@@ -11,8 +11,32 @@ function resolveInitialContent({
   remoteContent,
   remoteUpdatedAt,
 }) {
-  const hasRemote = typeof remoteContent === 'string' && remoteContent.length > 0;
-  const hasLocal = typeof localContent === 'string' && localContent.length > 0;
+  // Mirrors utils/constants.ts isEmptyTemplate + supabaseClient.ts merge logic.
+  function isEmptyTemplate(content) {
+    if (!content || typeof content !== 'string') return true;
+    const trimmed = content.trim();
+    if (!trimmed) return true;
+    const dateMatches = trimmed.match(/^\d{4}-\d{2}-\d{2}/gm) || [];
+    if (dateMatches.length > 1) return false;
+    const sectionPattern = /\[(EVENTS|DOING|DONE|NOTES)\]([\s\S]*?)(?=\[|$)/gi;
+    let sawSection = false;
+    let match;
+    while ((match = sectionPattern.exec(trimmed)) !== null) {
+      sawSection = true;
+      const sectionContent = match[2];
+      const cleaned = sectionContent
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l && !l.startsWith('=='))
+        .join('');
+      if (cleaned.length > 0) return false;
+    }
+    if (!sawSection) return false;
+    return true;
+  }
+
+  const hasRemote = !isEmptyTemplate(remoteContent);
+  const hasLocal = !isEmptyTemplate(localContent);
 
   if (!hasRemote && !hasLocal) {
     return { source: 'none', content: '', updatedAt: 0 };
@@ -64,6 +88,48 @@ test('resolveInitialContent prefers local when remote is empty', () => {
   assert.equal(result.source, 'local');
   assert.equal(result.content, 'local notes');
   assert.equal(result.updatedAt, 200);
+});
+
+test('resolveInitialContent prefers remote when local is only the template', () => {
+  const template = `2025-01-01
+========================================
+[EVENTS]
+
+[DOING]
+
+[DONE]
+
+[NOTES]
+`;
+  const result = resolveInitialContent({
+    localContent: template,
+    localUpdatedAt: 999999,
+    remoteContent: 'remote notes',
+    remoteUpdatedAt: 100,
+  });
+  assert.equal(result.source, 'remote');
+  assert.equal(result.content, 'remote notes');
+});
+
+test('resolveInitialContent treats single-day empty note as empty', () => {
+  const emptyDay = `2025-01-01
+========================================
+[EVENTS]
+
+[DOING]
+
+[DONE]
+
+[NOTES]
+`;
+  const result = resolveInitialContent({
+    localContent: emptyDay,
+    localUpdatedAt: 123,
+    remoteContent: '',
+    remoteUpdatedAt: 0,
+  });
+  assert.equal(result.source, 'none');
+  assert.equal(result.content, '');
 });
 
 test('resolveInitialContent prefers newer remote over older local', () => {

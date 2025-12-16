@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, CheckCircle, AlertCircle, ExternalLink, Settings, LogOut, User as UserIcon, Mail, Loader2 } from 'lucide-react';
-import { isConnected, startOAuthFlow, disconnect } from '../services/oauth';
+import { isConnected, startOAuthFlow, disconnect, refreshOAuthStatus } from '../services/oauth';
 import {
   isSupabaseConfigured,
   signInWithGoogle,
@@ -46,7 +46,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
-      setGoogleConnected(isConnected('google'));
+      // Refresh status from backend (best-effort), then update local UI flag
+      refreshOAuthStatus()
+        .catch(() => null)
+        .finally(() => setGoogleConnected(isConnected('google')));
       setStatus('idle');
       setStatusMsg('');
       setAuthMode('idle');
@@ -55,12 +58,17 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   }, [isOpen]);
 
-  const handleCalendarConnect = () => {
-    startOAuthFlow('google');
+  const handleCalendarConnect = async () => {
+    try {
+      await startOAuthFlow('google');
+    } catch (e: any) {
+      setStatus('error');
+      setStatusMsg(e?.message || 'Failed to start Google OAuth flow');
+    }
   };
 
-  const handleCalendarDisconnect = () => {
-    disconnect('google');
+  const handleCalendarDisconnect = async () => {
+    await disconnect('google');
     setGoogleConnected(false);
     setStatus('success');
     setStatusMsg('Disconnected from Google Calendar');

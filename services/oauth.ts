@@ -1,115 +1,137 @@
 /**
- * OAuth Service - handles authentication with Google and Microsoft
- * via the backend Cloudflare Worker.
+ * OAuth Service - server-side token persistence.
+ *
+ * Frontend never stores access/refresh tokens.
+ * We keep only a boolean \"connected\" flag locally for UI convenience.
+ * All calendar API calls use the user's Supabase session access token.
  */
+
+import { getSession } from './supabaseClient';
 
 // Backend URL - change this when deploying
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8787';
 
 export type OAuthProvider = 'google' | 'microsoft';
 
-interface TokenData {
-  accessToken: string;
-  refreshToken?: string;
-  expiresAt?: number;
+const CONNECTED_FLAG_KEY = (provider: OAuthProvider) => `oauth_connected_${provider}`;
+
+function setConnectedFlag(provider: OAuthProvider, value: boolean) {
+  try {
+    if (value) localStorage.setItem(CONNECTED_FLAG_KEY(provider), '1');
+    else localStorage.removeItem(CONNECTED_FLAG_KEY(provider));
+  } catch {
+    // ignore
+  }
 }
 
-// ===== Token Storage =====
-
-export const getToken = (provider: OAuthProvider): TokenData | null => {
-  const stored = localStorage.getItem(`oauth_${provider}`);
-  if (!stored) return null;
+export const isConnected = (provider: OAuthProvider): boolean => {
   try {
-    return JSON.parse(stored);
+    return localStorage.getItem(CONNECTED_FLAG_KEY(provider)) === '1';
   } catch {
-    return null;
+    return false;
   }
 };
 
-export const setToken = (provider: OAuthProvider, data: TokenData): void => {
-  localStorage.setItem(`oauth_${provider}`, JSON.stringify(data));
-};
-
-export const clearToken = (provider: OAuthProvider): void => {
-  localStorage.removeItem(`oauth_${provider}`);
-};
-
-export const isConnected = (provider: OAuthProvider): boolean => {
-  const token = getToken(provider);
-  return !!token?.accessToken;
-};
+async function getSupabaseAccessToken(): Promise<string> {
+  const session = await getSession();
+  const accessToken = session?.access_token;
+  if (!accessToken) throw new Error('Not signed in. Please sign in to connect your calendar.');
+  return accessToken;
+}
 
 // ===== OAuth Flow =====
 
-export const startOAuthFlow = (provider: OAuthProvider): void => {
-  // Generate a random state for CSRF protection
-  const state = Math.random().toString(36).substring(2, 15);
-  sessionStorage.setItem('oauth_state', state);
-  sessionStorage.setItem('oauth_provider', provider);
-
-  // Redirect to backend auth endpoint
-  window.location.href = `${BACKEND_URL}/auth/${provider}?state=${state}`;
-};
-
-export const handleOAuthCallback = (): { provider: OAuthProvider; success: boolean; error?: string } | null => {
-  const url = new URL(window.location.href);
-  
-  // Check if this is an OAuth callback
-  if (!url.pathname.includes('/oauth/callback') && !url.searchParams.has('access_token') && !url.searchParams.has('error')) {
-    // Also check hash for implicit flow
-    if (!url.hash.includes('access_token')) {
-      return null;
-    }
-  }
-
-  const provider = url.searchParams.get('provider') as OAuthProvider | null;
-  const accessToken = url.searchParams.get('access_token');
-  const refreshToken = url.searchParams.get('refresh_token');
-  const error = url.searchParams.get('error');
-
-  if (!provider) {
-    return null;
-  }
-
-  // Clear URL params
-  window.history.replaceState({}, '', '/');
-
-  if (error) {
-    return { provider, success: false, error };
-  }
-
-  if (accessToken) {
-    setToken(provider, {
-      accessToken,
-      refreshToken: refreshToken || undefined,
-      expiresAt: Date.now() + 3600 * 1000, // Assume 1 hour expiry
-    });
-    return { provider, success: true };
-  }
-
-  return { provider, success: false, error: 'No access token received' };
-};
-
-// ===== API Calls =====
-
-export const fetchEvents = async (provider: OAuthProvider, dateStr: string): Promise<string[]> => {
-  const token = getToken(provider);
-  if (!token?.accessToken) {
-    throw new Error(`Not connected to ${provider === 'google' ? 'Google Calendar' : 'Microsoft Outlook'}`);
-  }
-
-  const res = await fetch(`${BACKEND_URL}/api/${provider}/events?date=${dateStr}`, {
+/**
+ * Starts OAuth flow server-side. Requires Supabase session access token.
+ * Backend returns { authUrl }, which we redirect to.
+ */
+export const startOAuthFlow = async (provider: OAuthProvider): Promise<void> => {
+  const accessToken = await getSupabaseAccessToken();
+  const res = await fetch(`${BACKEND_URL}/auth/${provider}/start`, {
+    method: 'GET',
     headers: {
-      Authorization: `Bearer ${token.accessToken}`,
+      Authorization: `Bearer ${accessToken}`,
     },
   });
 
   if (!res.ok) {
     const data = await res.json().catch(() => ({})) as any;
-    if (res.status === 401) {
-      // Token expired, clear it
-      clearToken(provider);
-      throw new Error('Session expired. Please sign in again.');
+    throw new Error(data.error || 'Failed to start OAuth flow');
+  }
+
+  const data = await res.json() as { authUrl?: string };
+  if (!data.authUrl) throw new Error('Missing authUrl from backend');
+  window.location.href = data.authUrl;
+};
+
+/**
+ * Handles /oauth/callback redirect from backend.
+ * Backend does not include tokens in URL, only provider + success or error.
+ */
+export const handleOAuthCallback = (): { provider: OAuthProvider; success: boolean; error?: string } | null => {
+  const url = new URL(window.location.href);
+
+  if (!url.pathname.includes('/oauth/callback') && !url.searchParams.has('provider')) {
+    return null;
+  }
+
+  const provider = url.searchParams.get('provider') as OAuthProvider | null;
+  const success = url.searchParams.get('success');
+  const error = url.searchParams.get('error');
+
+  if (!provider) return null;
+
+  // Clear URL params
+  window.history.replaceState({}, '', '/');
+
+  if (error) {
+    setConnectedFlag(provider, false);
+    return { provider, success: false, error };
+  }
+
+  if (success === '1') {
+    setConnectedFlag(provider, true);
+    return { provider, success: true };
+  }
+
+  return { provider, success: false, error: 'OAuth completed without success' };
+};
+
+// ===== Status =====
+
+export const refreshOAuthStatus = async (): Promise<{ google: boolean; microsoft: boolean }> => {
+  const accessToken = await getSupabaseAccessToken();
+  const res = await fetch(`${BACKEND_URL}/api/oauth/status`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) {
+    // Don't hard fail UI; assume disconnected if we can't check.
+    setConnectedFlag('google', false);
+    setConnectedFlag('microsoft', false);
+    return { google: false, microsoft: false };
+  }
+  const data = await res.json() as { google?: boolean; microsoft?: boolean };
+  setConnectedFlag('google', !!data.google);
+  setConnectedFlag('microsoft', !!data.microsoft);
+  return { google: !!data.google, microsoft: !!data.microsoft };
+};
+
+// ===== API Calls =====
+
+export const fetchEvents = async (provider: OAuthProvider, dateStr: string): Promise<string[]> => {
+  const accessToken = await getSupabaseAccessToken();
+
+  const res = await fetch(`${BACKEND_URL}/api/${provider}/events?date=${encodeURIComponent(dateStr)}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({})) as any;
+    if (res.status === 401 && data?.needsAuth) {
+      setConnectedFlag(provider, false);
+      throw new Error('Calendar connection expired. Please reconnect in Settings.');
     }
     throw new Error(data.error || `Failed to fetch ${provider} events`);
   }
@@ -120,8 +142,18 @@ export const fetchEvents = async (provider: OAuthProvider, dateStr: string): Pro
 
 // ===== Disconnect =====
 
-export const disconnect = (provider: OAuthProvider): void => {
-  clearToken(provider);
+export const disconnect = async (provider: OAuthProvider): Promise<void> => {
+  const accessToken = await getSupabaseAccessToken();
+  await fetch(`${BACKEND_URL}/api/oauth/disconnect`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ provider }),
+  }).catch(() => {});
+
+  setConnectedFlag(provider, false);
 };
 
 

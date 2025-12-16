@@ -15,11 +15,11 @@ import Visualizer from './components/Visualizer';
 import ChatInterface from './components/ChatInterface';
 import SettingsModal from './components/SettingsModal';
 import AddEventTaskModal from './components/AddEventTaskModal';
-import { INITIAL_TEMPLATE } from './utils/constants';
+import { INITIAL_TEMPLATE, extractDatesFromContent, contentHasDate } from './utils/constants';
 import { updateSectionForDate } from './utils/textManager';
 import { addEventTaskToContent, extractEventName } from './utils/eventTasks';
 import { deleteEventSubtask, deleteEvent } from './utils/doingDone.js';
-import { handleOAuthCallback, fetchEvents, isConnected, OAuthProvider } from './services/oauth';
+import { handleOAuthCallback, fetchEvents, isConnected, OAuthProvider, refreshOAuthStatus } from './services/oauth';
 import {
   getSupabase,
   isSupabaseConfigured,
@@ -35,6 +35,33 @@ import { ViewMode } from './types';
 
 const CONTENT_STORAGE_KEY = 'monofocus_content';
 const CONTENT_UPDATED_AT_KEY = 'monofocus_content_updated_at';
+const SELECTED_DATE_KEY = 'monofocus_selected_date';
+
+/**
+ * Determines the best initial date to display:
+ * 1. Last selected date from localStorage (if valid)
+ * 2. Latest date found in content
+ * 3. Today's date
+ */
+function getInitialSelectedDate(content: string): string {
+  const today = new Date().toISOString().split('T')[0];
+  
+  // Try last selected date from localStorage
+  try {
+    const savedDate = localStorage.getItem(SELECTED_DATE_KEY);
+    if (savedDate && /^\d{4}-\d{2}-\d{2}$/.test(savedDate)) {
+      return savedDate;
+    }
+  } catch { /* ignore */ }
+  
+  // Find the latest date in the content
+  const dates = extractDatesFromContent(content);
+  if (dates.length > 0) {
+    return dates[0]; // Already sorted newest first
+  }
+  
+  return today;
+}
 
 function getLocalContentRecord() {
   let content = '';
@@ -79,8 +106,11 @@ const App: React.FC = () => {
   const [oauthMessage, setOauthMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   
-  // Date Navigation State
-  const [selectedDate, setSelectedDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  // Date Navigation State - initialized from localStorage or latest date in content
+  const [selectedDate, setSelectedDate] = useState<string>(() => {
+    const initialContent = localStorage.getItem(CONTENT_STORAGE_KEY) || INITIAL_TEMPLATE;
+    return getInitialSelectedDate(initialContent);
+  });
 
   // Handle calendar OAuth callback on mount
   useEffect(() => {
@@ -142,6 +172,12 @@ const App: React.FC = () => {
     };
   }, []);
 
+  // Refresh calendar connection status when session changes
+  useEffect(() => {
+    if (!session?.access_token) return;
+    refreshOAuthStatus().catch(() => null);
+  }, [session?.access_token]);
+
   // Cloud hydration when session is available
   useEffect(() => {
     if (!session?.user?.id) return;
@@ -171,6 +207,9 @@ const App: React.FC = () => {
           setLocalContentRecord(chosen.content, chosen.updatedAt || Date.now());
           setContent(chosen.content);
           setLastCloudSyncAt(chosen.updatedAt || null);
+          // Update selected date to the best date from the hydrated content
+          const bestDate = getInitialSelectedDate(chosen.content);
+          setSelectedDate(bestDate);
         } else if (chosen.source === 'local' && local.content) {
           // Seed the cloud if it doesn't have anything yet
           if (!remote) {
@@ -216,6 +255,58 @@ const App: React.FC = () => {
 
     return () => clearTimeout(timer);
   }, [content, session?.user?.id, isHydratingFromCloud]);
+
+  // Persist selected date to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(SELECTED_DATE_KEY, selectedDate);
+    } catch { /* ignore */ }
+  }, [selectedDate]);
+
+  // Auto-insert missing day entry when navigating to a date that doesn't exist
+  useEffect(() => {
+    // Skip during initial hydration to avoid race conditions
+    if (isHydratingFromCloud) return;
+    
+    // Check if the selected date exists in content
+    if (!contentHasDate(content, selectedDate)) {
+      // Extract carry-over items from the previous day inline
+      const getCarryOverItemsInline = (fullContent: string, currentDateStr: string): string[] => {
+        const dateRegex = /^(\d{4}-\d{2}-\d{2})/gm;
+        const indices: {date: string, index: number}[] = [];
+        let match;
+        while ((match = dateRegex.exec(fullContent)) !== null) {
+          indices.push({ date: match[1], index: match.index });
+        }
+        indices.sort((a, b) => a.index - b.index);
+        const currentIndex = indices.findIndex(i => i.date === currentDateStr);
+        let prevBlockContent = "";
+        if (currentIndex > 0) {
+          const prev = indices[currentIndex - 1];
+          const curr = indices[currentIndex];
+          prevBlockContent = fullContent.substring(prev.index, curr.index);
+        } else if (currentIndex === -1 && indices.length > 0) {
+          const last = indices[indices.length - 1];
+          prevBlockContent = fullContent.substring(last.index);
+        } else {
+          return [];
+        }
+        const doingMatch = prevBlockContent.match(/\[DOING\]([\s\S]*?)(\[|$)/);
+        if (!doingMatch) return [];
+        const lines = doingMatch[1].split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('=='));
+        return lines.filter(l => !l.toLowerCase().startsWith('x '));
+      };
+
+      const carryOver = getCarryOverItemsInline(content, selectedDate);
+      const doingContent = carryOver.length > 0 ? carryOver.join('\n') : '';
+      const newEntry = `\n\n${selectedDate}\n========================================\n[EVENTS]\n\n[DOING]\n${doingContent}\n\n[DONE]\n\n[NOTES]\n`;
+      
+      setContent(prev => {
+        if (prev.includes(selectedDate)) return prev;
+        return prev + newEntry;
+      });
+    }
+  }, [selectedDate, content, isHydratingFromCloud]);
 
   // Handle Date Navigation
   const changeDate = (days: number) => {
@@ -277,7 +368,27 @@ const App: React.FC = () => {
     });
   };
 
-  // Generic sync calendar handler
+  // Silent calendar sync (no alerts, used for auto-refresh)
+  const syncCalendarSilently = useCallback(async (provider: OAuthProvider, dateStr: string): Promise<boolean> => {
+    if (!isConnected(provider)) {
+      return false;
+    }
+
+    try {
+      const events = await fetchEvents(provider, dateStr);
+      if (events.length === 0) {
+        return true; // Success, but no events
+      }
+      
+      setContent(prevContent => updateSectionForDate(prevContent, dateStr, 'EVENTS', events));
+      return true;
+    } catch (error: any) {
+      console.error("Silent sync error:", error);
+      return false;
+    }
+  }, []);
+
+  // Generic sync calendar handler (with user feedback)
   const handleSyncCalendar = useCallback(async (provider: OAuthProvider, dateStr: string) => {
     if (!isConnected(provider)) {
       const providerName = provider === 'google' ? 'Google Calendar' : 'Microsoft Outlook';
@@ -305,6 +416,58 @@ const App: React.FC = () => {
       setIsProcessing(false);
     }
   }, [content]);
+
+  // Auto-refresh events when date changes (if calendar is connected)
+  useEffect(() => {
+    // Skip during hydration
+    if (isHydratingFromCloud) return;
+    
+    // Only auto-sync if connected to Google
+    if (isConnected('google')) {
+      syncCalendarSilently('google', selectedDate);
+    }
+  }, [selectedDate, isHydratingFromCloud, syncCalendarSilently]);
+
+  // Auto-refresh events on window focus and visibility change
+  useEffect(() => {
+    let lastRefresh = Date.now();
+    const MIN_REFRESH_INTERVAL = 60000; // At least 1 minute between refreshes
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && Date.now() - lastRefresh > MIN_REFRESH_INTERVAL) {
+        if (isConnected('google')) {
+          syncCalendarSilently('google', selectedDate);
+          lastRefresh = Date.now();
+        }
+      }
+    };
+
+    const handleFocus = () => {
+      if (Date.now() - lastRefresh > MIN_REFRESH_INTERVAL) {
+        if (isConnected('google')) {
+          syncCalendarSilently('google', selectedDate);
+          lastRefresh = Date.now();
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
+
+    // Periodic refresh every 5 minutes while visible
+    const intervalId = setInterval(() => {
+      if (document.visibilityState === 'visible' && isConnected('google')) {
+        syncCalendarSilently('google', selectedDate);
+        lastRefresh = Date.now();
+      }
+    }, 5 * 60 * 1000); // 5 minutes
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
+      clearInterval(intervalId);
+    };
+  }, [selectedDate, syncCalendarSilently]);
 
   // Handle Event Task Addition
   const handleAddEventTask = useCallback((dateStr: string, eventRawLine: string) => {
