@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { extractEventName, eventToTag } from '../utils/eventTasks';
 import { getDoingItemsForDate, moveDoingItemToDone, extractTagsFromLine, tagToLabel } from '../utils/doingDone.js';
+import { detectCommandAtCursor, stripRange } from '../utils/editorCommands';
 
 interface EditorProps {
   content: string;
@@ -21,6 +22,7 @@ const Editor: React.FC<EditorProps> = ({ content, onChange, className = '', scro
   const [commandDate, setCommandDate] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [cursorIndex, setCursorIndex] = useState(0);
+  const [commandTrigger, setCommandTrigger] = useState<{ start: number; end: number } | null>(null);
 
   useEffect(() => {
     if (scrollToDate && textareaRef.current && content) {
@@ -153,54 +155,47 @@ const Editor: React.FC<EditorProps> = ({ content, onChange, className = '', scro
     const selStart = textarea.selectionStart;
     setCursorIndex(selStart);
 
-    // Look back for /event
-    const textBack = val.substring(selStart - 6, selStart);
-    if (textBack === '/event') {
-      const events = getCurrentDayEvents(val, selStart);
-      if (events.length > 0) {
-        setFilteredEvents(events);
-        setCommandMode('event');
-        setCommandDate(getCurrentDayDate(val, selStart) || focusedDate);
-        setSelectedIndex(0);
-        const coords = getCaretCoordinates();
-        setCommandPosition(coords);
-        setShowCommandMenu(true);
+    const detected = detectCommandAtCursor(val, selStart);
+    if (detected) {
+      // Build the menu from content *without* the command token so the selected line matches
+      // what will exist after we strip the command from the editor.
+      const stripped = stripRange(val, detected.start, detected.end);
+
+      if (detected.mode === 'event' || detected.mode === 'subtask') {
+        const events = getCurrentDayEvents(stripped.text, stripped.cursor);
+        if (events.length > 0) {
+          setFilteredEvents(events);
+          setCommandMode(detected.mode);
+          setCommandDate(getCurrentDayDate(stripped.text, stripped.cursor) || focusedDate);
+          setSelectedIndex(0);
+          setCommandTrigger({ start: detected.start, end: detected.end });
+          const coords = getCaretCoordinates();
+          setCommandPosition(coords);
+          setShowCommandMenu(true);
+        }
+        return;
       }
-      return;
-    } else if (val.substring(selStart - 8, selStart) === '/subtask') {
-      const events = getCurrentDayEvents(val, selStart);
-      if (events.length > 0) {
-        setFilteredEvents(events);
-        setCommandMode('subtask');
-        setCommandDate(getCurrentDayDate(val, selStart) || focusedDate);
-        setSelectedIndex(0);
-        const coords = getCaretCoordinates();
-        setCommandPosition(coords);
-        setShowCommandMenu(true);
-      }
-      return;
-    } else {
-      // Look back for /done
-      const doneBack = val.substring(selStart - 5, selStart);
-      if (doneBack === '/done') {
-        // Build the menu from content *without* the /done token so the selected line matches
-        // what will exist after we strip the command from the editor.
-        const valWithoutCommand = val.substring(0, selStart - 5) + val.substring(selStart);
-        const dateAtCursor = getCurrentDayDate(valWithoutCommand, selStart - 5) || focusedDate;
-        const doing = getDoingItemsForDate(valWithoutCommand, dateAtCursor).filter(Boolean);
+
+      if (detected.mode === 'done') {
+        const dateAtCursor = getCurrentDayDate(stripped.text, stripped.cursor) || focusedDate;
+        const doing = getDoingItemsForDate(stripped.text, dateAtCursor).filter(Boolean);
         if (doing.length > 0) {
           setFilteredDoing(doing);
           setCommandMode('done');
           setCommandDate(dateAtCursor);
           setSelectedIndex(0);
+          setCommandTrigger({ start: detected.start, end: detected.end });
           const coords = getCaretCoordinates();
           setCommandPosition(coords);
           setShowCommandMenu(true);
           return;
         }
       }
+    }
 
-      if (showCommandMenu) setShowCommandMenu(false);
+    if (showCommandMenu) {
+      setShowCommandMenu(false);
+      setCommandTrigger(null);
     }
   };
 
@@ -232,20 +227,21 @@ const Editor: React.FC<EditorProps> = ({ content, onChange, className = '', scro
     if (e.key === 'Escape') {
       e.preventDefault();
       setShowCommandMenu(false);
+      setCommandTrigger(null);
       return;
     }
   };
 
   const insertEventTag = (eventText: string) => {
     if (!textareaRef.current) return;
+    if (!commandTrigger) return;
     
     const textarea = textareaRef.current;
     const val = content;
-    const start = cursorIndex;
     
-    // Remove the "/event" trigger
-    const textBefore = val.substring(0, start - 6);
-    const textAfter = val.substring(start);
+    // Remove the command trigger (including any trailing whitespace)
+    const textBefore = val.substring(0, commandTrigger.start);
+    const textAfter = val.substring(commandTrigger.end);
     
     // Create Tag
     const tag = `${eventToTag(extractEventName(eventText))} `;
@@ -253,6 +249,7 @@ const Editor: React.FC<EditorProps> = ({ content, onChange, className = '', scro
     const newContent = textBefore + tag + textAfter;
     onChange(newContent);
     setShowCommandMenu(false);
+    setCommandTrigger(null);
     
     // Restore focus
     requestAnimationFrame(() => {
@@ -264,17 +261,18 @@ const Editor: React.FC<EditorProps> = ({ content, onChange, className = '', scro
 
   const createEventSubtask = (eventLine: string) => {
     if (!textareaRef.current) return;
+    if (!commandTrigger) return;
     const textarea = textareaRef.current;
     const val = content;
-    const start = cursorIndex;
 
-    // Remove the "/subtask" trigger
-    const textBefore = val.substring(0, start - 8);
-    const textAfter = val.substring(start);
+    // Remove the command trigger (including any trailing whitespace)
+    const textBefore = val.substring(0, commandTrigger.start);
+    const textAfter = val.substring(commandTrigger.end);
     const withoutTrigger = textBefore + textAfter;
 
     onChange(withoutTrigger);
     setShowCommandMenu(false);
+    setCommandTrigger(null);
 
     // Open the existing modal flow (owned by App) for the chosen event
     const dateForCommand = commandDate || getCurrentDayDate(withoutTrigger, textBefore.length) || focusedDate;
@@ -288,13 +286,13 @@ const Editor: React.FC<EditorProps> = ({ content, onChange, className = '', scro
 
   const markDoingAsDone = (doingRawLine: string) => {
     if (!textareaRef.current) return;
+    if (!commandTrigger) return;
     const textarea = textareaRef.current;
     const val = content;
-    const start = cursorIndex;
 
-    // Remove the "/done" trigger
-    const textBefore = val.substring(0, start - 5);
-    const textAfter = val.substring(start);
+    // Remove the command trigger (including any trailing whitespace)
+    const textBefore = val.substring(0, commandTrigger.start);
+    const textAfter = val.substring(commandTrigger.end);
     const withoutTrigger = textBefore + textAfter;
 
     // If the selected item somehow still contains "/done" (e.g. older menu state),
@@ -310,6 +308,7 @@ const Editor: React.FC<EditorProps> = ({ content, onChange, className = '', scro
 
     onChange(newContent);
     setShowCommandMenu(false);
+    setCommandTrigger(null);
 
     requestAnimationFrame(() => {
       textarea.focus();
@@ -325,7 +324,10 @@ const Editor: React.FC<EditorProps> = ({ content, onChange, className = '', scro
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={handleKeyDown}
         onKeyUp={handleKeyUp}
-        onClick={() => setShowCommandMenu(false)}
+        onClick={() => {
+          setShowCommandMenu(false);
+          setCommandTrigger(null);
+        }}
         className="w-full h-full p-8 font-mono text-sm md:text-base leading-relaxed resize-none outline-none text-ink bg-transparent selection:bg-yellow-200"
         spellCheck={false}
         placeholder="Start typing your tasks... Type /event to tag an event, /subtask to add a task under an event, or /done to move a task into DONE."
