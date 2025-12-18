@@ -14,7 +14,7 @@ compatibility_date = "2024-12-01"
 
 [vars]
 # Frontend URL for CORS and redirects (change for production)
-FRONTEND_URL = "https://monofocus.pages.dev"
+FRONTEND_URL = "https://better-note-taking.pages.dev"
 # Microsoft tenant (use "common" for multi-tenant)
 MICROSOFT_TENANT = "common"
 

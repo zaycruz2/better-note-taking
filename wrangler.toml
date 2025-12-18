@@ -1,0 +1,23 @@
+name = "monofocus-oauth"
+main = "backend/src/index.ts"
+compatibility_date = "2024-12-01"
+
+# NOTE:
+# This file exists so Cloudflare "Workers Builds" (git-based deploys)
+# can run `npx wrangler deploy` from the repo root.
+#
+# Local development for the worker still lives in `backend/` and can use:
+#   cd backend && npm run dev
+
+[vars]
+# Frontend URL for CORS and OAuth redirects (change for production)
+FRONTEND_URL = "https://better-note-taking.pages.dev"
+# Microsoft tenant (use "common" for multi-tenant)
+MICROSOFT_TENANT = "common"
+
+# KV namespace for OAuth state (CSRF protection)
+[[kv_namespaces]]
+binding = "OAUTH_STATE"
+id = "7127fac8ed864c16ad904f322563ce4e"
+preview_id = "bde5470a5532408aad8ab36bb204480f"
+
