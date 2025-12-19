@@ -52,6 +52,7 @@ export interface ProjectRecord {
   description: string | null;
   status: ProjectStatus;
   blocking_or_reason: string | null;
+  notes: string | null;
   created_at: string;
   updated_at: string;
 }

@@ -7,9 +7,10 @@ export type ProjectUpsertInput = {
   description?: string | null;
   status?: ProjectStatus;
   blocking_or_reason?: string | null;
+  notes?: string | null;
 };
 
-export type ProjectUpdateInput = Partial<Pick<ProjectRecord, 'name' | 'description' | 'status' | 'blocking_or_reason'>>;
+export type ProjectUpdateInput = Partial<Pick<ProjectRecord, 'name' | 'description' | 'status' | 'blocking_or_reason' | 'notes'>>;
 
 function normalizeSupabaseError(e: any): Error {
   const msg = e?.message || e?.error_description || String(e);
@@ -19,7 +20,7 @@ function normalizeSupabaseError(e: any): Error {
 export async function fetchProjects(userId: string): Promise<ProjectRecord[]> {
   const { data, error } = await getSupabase()
     .from('projects')
-    .select('id, user_id, name, description, status, blocking_or_reason, created_at, updated_at')
+    .select('id, user_id, name, description, status, blocking_or_reason, notes, created_at, updated_at')
     .eq('user_id', userId)
     .order('updated_at', { ascending: false });
 
@@ -35,13 +36,14 @@ export async function createProject(input: ProjectUpsertInput): Promise<ProjectR
     description: input.description ?? null,
     status: input.status ?? 'active',
     blocking_or_reason: input.blocking_or_reason ?? null,
+    notes: input.notes ?? null,
     updated_at: now,
   };
 
   const { data, error } = await getSupabase()
     .from('projects')
     .insert(payload)
-    .select('id, user_id, name, description, status, blocking_or_reason, created_at, updated_at')
+    .select('id, user_id, name, description, status, blocking_or_reason, notes, created_at, updated_at')
     .single();
 
   if (error) throw normalizeSupabaseError(error);
@@ -54,7 +56,7 @@ export async function updateProject(id: string, patch: ProjectUpdateInput): Prom
     .from('projects')
     .update({ ...patch, updated_at: now })
     .eq('id', id)
-    .select('id, user_id, name, description, status, blocking_or_reason, created_at, updated_at')
+    .select('id, user_id, name, description, status, blocking_or_reason, notes, created_at, updated_at')
     .single();
 
   if (error) throw normalizeSupabaseError(error);

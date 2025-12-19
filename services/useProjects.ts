@@ -28,7 +28,7 @@ export function useProjects(params: { userId: string | null; enabled: boolean })
   }, [refresh]);
 
   const create = useCallback(
-    async (input: { name: string; description?: string; status?: ProjectStatus; blocking_or_reason?: string }) => {
+    async (input: { name: string; description?: string; status?: ProjectStatus; blocking_or_reason?: string; notes?: string }) => {
       if (!userId) throw new Error('Not signed in');
       const created = await createProject({
         user_id: userId,
@@ -36,6 +36,7 @@ export function useProjects(params: { userId: string | null; enabled: boolean })
         description: input.description ?? null,
         status: input.status ?? 'active',
         blocking_or_reason: input.blocking_or_reason ?? null,
+        notes: typeof input.notes === 'string' ? input.notes : null,
       });
       setProjects((prev) => [created, ...prev]);
       return created;
