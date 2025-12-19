@@ -1,6 +1,6 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect, useState } from 'react';
 import { SectionType, ParsedSection, ParsedDay, ParsedItem } from '../types';
-import { Calendar, Plus, RefreshCw, CheckSquare, Square, PlusCircle, Trash2 } from 'lucide-react';
+import { Calendar, Plus, RefreshCw, CheckSquare, Square, PlusCircle, Trash2, ChevronDown, ChevronRight } from 'lucide-react';
 import { extractTagsFromLine } from '../utils/doingDone.js';
 
 interface VisualizerProps {
@@ -24,7 +24,31 @@ const Visualizer: React.FC<VisualizerProps> = ({
   onDeleteEventSubtask,
   onToggleItem
 }) => {
-  const parsedData = useMemo(() => {
+  const storageKey = 'monofocus_visualizer_collapsed_sections_v1';
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw) as Record<string, boolean>;
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(collapsed));
+    } catch {
+      // ignore
+    }
+  }, [collapsed]);
+
+  const toggleCollapsed = (key: string) => {
+    setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const days = useMemo(() => {
     const lines = content.split('\n');
     const days: Record<string, ParsedDay> = {};
     
@@ -118,7 +142,7 @@ const Visualizer: React.FC<VisualizerProps> = ({
     return days;
   }, [content]);
 
-  const activeDayData = parsedData[focusedDate];
+  const activeDayData = days[focusedDate];
 
   const renderTodoLine = (rawText: string) => {
     // Clean UX: never show raw hashtags in the preview.
@@ -139,24 +163,26 @@ const Visualizer: React.FC<VisualizerProps> = ({
 
   if (!activeDayData) {
     return (
-      <div className="h-full w-full flex flex-col items-center justify-center text-gray-400 p-8 space-y-4">
-        <Calendar className="w-12 h-12 opacity-20" />
-        <p>No entries found for {focusedDate}</p>
-        {onAddEntry && (
-          <button 
-            onClick={() => onAddEntry(focusedDate)}
-            className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors shadow-sm"
-          >
-            <Plus className="w-4 h-4" />
-            Initialize {focusedDate}
-          </button>
-        )}
+      <div className="h-full w-full overflow-y-auto p-8 space-y-4 bg-white font-sans">
+        <div className="h-full w-full flex flex-col items-center justify-center text-gray-400 p-8 space-y-4">
+          <Calendar className="w-12 h-12 opacity-20" />
+          <p>No entries found for {focusedDate}</p>
+          {onAddEntry && (
+            <button
+              onClick={() => onAddEntry(focusedDate)}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors shadow-sm"
+            >
+              <Plus className="w-4 h-4" />
+              Initialize {focusedDate}
+            </button>
+          )}
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="h-full w-full overflow-y-auto p-8 space-y-6 bg-white font-sans">
+    <div className="h-full w-full overflow-y-auto p-8 space-y-4 bg-white font-sans">
       <h2 className="text-2xl font-bold text-gray-900 border-b border-gray-100 pb-4 mb-6 flex justify-between items-center">
         {new Date(focusedDate + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
       </h2>
@@ -166,11 +192,36 @@ const Visualizer: React.FC<VisualizerProps> = ({
       )}
 
       {activeDayData.sections.map((section, idx) => (
+        (() => {
+          const titleKey = (section.type === SectionType.DOING || section.type === SectionType.DONE || section.type === SectionType.NOTES)
+            ? section.type
+            : section.title;
+
+          const isCollapsible =
+            section.type === SectionType.DOING ||
+            section.type === SectionType.DONE ||
+            section.type === SectionType.NOTES;
+
+          const isCollapsed = isCollapsible ? !!collapsed[titleKey] : false;
+
+          return (
         <div key={idx} className={`p-4 rounded-r-lg shadow-sm ${renderSectionColor(section.type)} group relative`}>
           <div className="flex items-center justify-between mb-2">
-            <h3 className="font-bold text-gray-700 tracking-wide text-xs uppercase opacity-70">
-              {section.title}
-            </h3>
+            <div className="flex items-center gap-2">
+              {isCollapsible && (
+                <button
+                  type="button"
+                  onClick={() => toggleCollapsed(titleKey)}
+                  className="text-gray-500 hover:text-gray-800 transition-colors"
+                  title={isCollapsed ? 'Expand' : 'Collapse'}
+                >
+                  {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                </button>
+              )}
+              <h3 className="font-bold text-gray-700 tracking-wide text-xs uppercase opacity-70">
+                {section.title}
+              </h3>
+            </div>
             {section.type === SectionType.EVENTS && onSyncCalendar && (
                <button 
                 onClick={() => onSyncCalendar(focusedDate)}
@@ -182,6 +233,7 @@ const Visualizer: React.FC<VisualizerProps> = ({
             )}
           </div>
           
+          {isCollapsed ? null : (
           <ul className="space-y-3">
             {section.items.map((item, i) => (
               <li key={i} className="flex flex-col gap-1">
@@ -267,7 +319,10 @@ const Visualizer: React.FC<VisualizerProps> = ({
                 <li className="text-xs text-gray-400 italic">Empty</li>
             )}
           </ul>
+          )}
         </div>
+          );
+        })()
       ))}
     </div>
   );

@@ -1,16 +1,41 @@
 // Helper to get today's date in YYYY-MM-DD format
 const getTodayString = () => new Date().toISOString().split('T')[0];
 
-export const INITIAL_TEMPLATE = `${getTodayString()}
-========================================
-[EVENTS]
+export function buildDayBlock(params: {
+  dateStr: string;
+  events?: string[];
+  doing?: string[];
+  done?: string[];
+  notes?: string[];
+}): string {
+  const { dateStr } = params;
+  const events = (params.events || []).filter(Boolean);
+  const doing = (params.doing || []).filter(Boolean);
+  const done = (params.done || []).filter(Boolean);
+  const notes = (params.notes || []).filter(Boolean);
 
-[DOING]
+  // Canonical format: exactly one blank line between sections, never multiple.
+  const out: string[] = [
+    dateStr,
+    '========================================',
+    '[EVENTS]',
+    ...events,
+    '',
+    '[DOING]',
+    ...doing,
+    '',
+    '[DONE]',
+    ...done,
+    '',
+    '[NOTES]',
+    ...notes,
+    '',
+  ];
 
-[DONE]
+  return out.join('\n');
+}
 
-[NOTES]
-`;
+export const INITIAL_TEMPLATE = buildDayBlock({ dateStr: getTodayString() });
 
 /**
  * Checks if content is effectively empty (just a template with no real data).

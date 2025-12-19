@@ -20,8 +20,23 @@ export const updateSectionForDate = (
 
   // If date doesn't exist, create it at the top
   if (dateIndex === -1) {
-    const newSectionBlock = `\n${dateHeader}\n========================================\n${sectionHeader}\n${newItems.join('\n')}\n\n[DOING]\n\n[BACKLOG]\n\n[DONE]\n\n[NOTES]\n`;
-    return newSectionBlock + content;
+    const blockLines: string[] = [
+      dateHeader,
+      '========================================',
+      sectionHeader,
+      ...newItems,
+      '',
+      '[DOING]',
+      '',
+      '[DONE]',
+      '',
+      '[NOTES]',
+      '',
+      '',
+    ];
+    // Create with exactly one blank line separating from existing content (if any).
+    const existing = (content || '').replace(/^\n+/, '');
+    return blockLines.join('\n') + existing;
   }
 
   // Search for section within that date
@@ -204,7 +219,8 @@ export function dedupeDateBlocks(content: string): string {
       ...acc.order.filter((h) => !preferred.includes(h)),
     ];
 
-    for (const h of headers) {
+    for (let hi = 0; hi < headers.length; hi++) {
+      const h = headers[hi];
       rebuilt.push(h);
       const body = acc.sections.get(h) || [];
       // Trim leading blank lines but preserve internal formatting
@@ -214,9 +230,11 @@ export function dedupeDateBlocks(content: string): string {
         started = true;
         rebuilt.push(line);
       }
-      rebuilt.push(''); // blank line between sections
+      // Exactly one blank line between sections (but not double-blank before next date).
+      if (hi !== headers.length - 1) rebuilt.push('');
     }
-    rebuilt.push(''); // blank line between days
+    // Exactly one blank line between days.
+    rebuilt.push('');
   }
 
   return rebuilt.join('\n');

@@ -15,7 +15,7 @@ import Visualizer from './components/Visualizer';
 import ChatInterface from './components/ChatInterface';
 import SettingsModal from './components/SettingsModal';
 import AddEventTaskModal from './components/AddEventTaskModal';
-import { INITIAL_TEMPLATE, extractDatesFromContent, contentHasDate } from './utils/constants';
+import { INITIAL_TEMPLATE, extractDatesFromContent, contentHasDate, buildDayBlock } from './utils/constants';
 import { updateSectionForDate, dedupeDateBlocks } from './utils/textManager';
 import { addEventTaskToContent, extractEventName } from './utils/eventTasks';
 import { deleteEventSubtask, deleteEvent } from './utils/doingDone.js';
@@ -78,6 +78,14 @@ function getLocalContentRecord() {
 function setLocalContentRecord(content: string, updatedAtMs: number) {
   localStorage.setItem(CONTENT_STORAGE_KEY, content);
   localStorage.setItem(CONTENT_UPDATED_AT_KEY, String(updatedAtMs));
+}
+
+function appendDayBlockWithSingleGap(prev: string, block: string): string {
+  const base = prev || '';
+  if (!base.trim()) return block;
+  // Ensure there is exactly one blank line between blocks (i.e. exactly two trailing newlines).
+  const withoutTrailingNewlines = base.replace(/\n+$/g, '');
+  return `${withoutTrailingNewlines}\n\n${block}`;
 }
 
 const App: React.FC = () => {
@@ -409,10 +417,10 @@ const App: React.FC = () => {
       };
 
       const carryOver = getCarryOverItemsInline(deduped, selectedDate);
-      const doingContent = carryOver.length > 0 ? carryOver.join('\n') : '';
-      const newEntry = `\n\n${selectedDate}\n========================================\n[EVENTS]\n\n[DOING]\n${doingContent}\n\n[DONE]\n\n[NOTES]\n`;
+      const doingLines = carryOver.length > 0 ? carryOver : [];
+      const newEntry = buildDayBlock({ dateStr: selectedDate, doing: doingLines });
 
-      return deduped + newEntry;
+      return appendDayBlockWithSingleGap(deduped, newEntry);
     });
   }, [selectedDate, isHydratingFromCloud]);
 
@@ -473,10 +481,10 @@ const App: React.FC = () => {
         }
         
         const carryOver = getCarryOverItems(deduped, dateStr);
-        const doingContent = carryOver.length > 0 ? carryOver.join('\n') : '';
-        const newEntry = `\n\n${dateStr}\n========================================\n[EVENTS]\n\n[DOING]\n${doingContent}\n\n[DONE]\n\n[NOTES]\n`;
+        const doingLines = carryOver.length > 0 ? carryOver : [];
+        const newEntry = buildDayBlock({ dateStr, doing: doingLines });
         
-        return deduped + newEntry; 
+        return appendDayBlockWithSingleGap(deduped, newEntry);
     });
   };
 
@@ -499,7 +507,7 @@ const App: React.FC = () => {
         const deduped = dedupeDateBlocks(prevContent);
         const withDate = contentHasDate(deduped, dateStr)
           ? deduped
-          : deduped + `\n\n${dateStr}\n========================================\n[EVENTS]\n\n[DOING]\n\n[DONE]\n\n[NOTES]\n`;
+          : appendDayBlockWithSingleGap(deduped, buildDayBlock({ dateStr }));
         const mergedEvents = mergeFetchedEventsPreservingSubtasks({
           prevContent: withDate,
           dateStr,
@@ -538,7 +546,7 @@ const App: React.FC = () => {
         const deduped = dedupeDateBlocks(prevContent);
         const withDate = contentHasDate(deduped, dateStr)
           ? deduped
-          : deduped + `\n\n${dateStr}\n========================================\n[EVENTS]\n\n[DOING]\n\n[DONE]\n\n[NOTES]\n`;
+          : appendDayBlockWithSingleGap(deduped, buildDayBlock({ dateStr }));
         const mergedEvents = mergeFetchedEventsPreservingSubtasks({
           prevContent: withDate,
           dateStr,
@@ -822,3 +830,4 @@ const App: React.FC = () => {
 };
 
 export default App;
+
