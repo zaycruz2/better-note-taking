@@ -40,3 +40,18 @@ export interface ParsedDay {
   sections: ParsedSection[];
   startIndex: number; // For scrolling
 }
+
+// ===== Projects =====
+
+export type ProjectStatus = 'active' | 'shipped' | 'paused' | 'killed';
+
+export interface ProjectRecord {
+  id: string;
+  user_id: string;
+  name: string;
+  description: string | null;
+  status: ProjectStatus;
+  blocking_or_reason: string | null;
+  created_at: string;
+  updated_at: string;
+}

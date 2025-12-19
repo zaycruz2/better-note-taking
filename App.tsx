@@ -8,10 +8,12 @@ import {
   ChevronLeft,
   ChevronRight,
   Settings,
-  AlertTriangle
+  AlertTriangle,
+  Folder
 } from 'lucide-react';
 import Editor from './components/Editor';
 import Visualizer from './components/Visualizer';
+import ProjectsView from './components/ProjectsView';
 import ChatInterface from './components/ChatInterface';
 import SettingsModal from './components/SettingsModal';
 import AddEventTaskModal from './components/AddEventTaskModal';
@@ -196,6 +198,7 @@ const App: React.FC = () => {
     return localStorage.getItem(CONTENT_STORAGE_KEY) || INITIAL_TEMPLATE;
   });
   const [viewMode, setViewMode] = useState<ViewMode>(ViewMode.SPLIT);
+  const [mainView, setMainView] = useState<'daily' | 'projects'>('daily');
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
@@ -677,8 +680,32 @@ const App: React.FC = () => {
       <header className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-4 shrink-0 shadow-sm z-10">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-gray-900 rounded-md flex items-center justify-center text-white font-mono font-bold">M</div>
+
+          {/* Main view toggle */}
+          <div className="flex bg-gray-100 rounded-lg p-1 gap-1 ml-1">
+            <button
+              onClick={() => setMainView('daily')}
+              className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-all ${
+                mainView === 'daily' ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'
+              }`}
+              title="Daily Notes"
+            >
+              Daily
+            </button>
+            <button
+              onClick={() => setMainView('projects')}
+              className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-all flex items-center gap-1 ${
+                mainView === 'projects' ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'
+              }`}
+              title="Projects"
+            >
+              <Folder className="w-3.5 h-3.5" />
+              Projects
+            </button>
+          </div>
           
-          {/* Date Navigation */}
+          {/* Date Navigation (Daily only) */}
+          {mainView === 'daily' && (
           <div className="flex items-center bg-gray-100 rounded-lg p-0.5 ml-2 sm:ml-4">
              <button onClick={() => changeDate(-1)} className="p-1.5 hover:bg-white hover:shadow rounded-md text-gray-600 transition-all">
                <ChevronLeft className="w-4 h-4" />
@@ -699,6 +726,7 @@ const App: React.FC = () => {
                <ChevronRight className="w-4 h-4" />
              </button>
           </div>
+          )}
 
           <span className="text-xs text-gray-400 ml-4 hidden md:block">
             {lastSaved ? `Saved ${lastSaved.toLocaleTimeString()}` : 'Unsaved'}
@@ -755,38 +783,48 @@ const App: React.FC = () => {
       {/* Main Content Area */}
       <main className="flex-1 overflow-hidden relative flex">
         
-        {/* Editor Panel */}
-        <div className={`
-          flex-1 h-full transition-all duration-300
-          ${viewMode === ViewMode.PREVIEW ? 'hidden' : 'block'}
-          ${viewMode === ViewMode.SPLIT ? 'w-1/2 border-r border-gray-200' : 'w-full'}
-        `}>
-          <Editor 
-            content={content} 
-            onChange={setContent} 
-            scrollToDate={selectedDate}
-            focusedDate={selectedDate}
-            onAddEventTask={handleAddEventTask}
-          />
-        </div>
+        {mainView === 'daily' ? (
+          <>
+            {/* Editor Panel */}
+            <div className={`
+              flex-1 h-full transition-all duration-300
+              ${viewMode === ViewMode.PREVIEW ? 'hidden' : 'block'}
+              ${viewMode === ViewMode.SPLIT ? 'w-1/2 border-r border-gray-200' : 'w-full'}
+            `}>
+              <Editor 
+                content={content} 
+                onChange={setContent} 
+                scrollToDate={selectedDate}
+                focusedDate={selectedDate}
+                onAddEventTask={handleAddEventTask}
+              />
+            </div>
 
-        {/* Visualizer Panel */}
-        <div className={`
-          h-full transition-all duration-300 bg-gray-50
-          ${viewMode === ViewMode.EDITOR ? 'hidden' : 'block'}
-          ${viewMode === ViewMode.SPLIT ? 'w-1/2' : 'w-full'}
-        `}>
-          <Visualizer 
-            content={content} 
-            focusedDate={selectedDate}
-            onAddEntry={handleAddEntry}
-            onSyncCalendar={(dateStr) => handleSyncCalendar('google', dateStr)}
-            onAddEventTask={handleAddEventTask}
-            onDeleteEvent={handleDeleteEvent}
-            onDeleteEventSubtask={handleDeleteEventSubtask}
-            onToggleItem={handleToggleItem}
+            {/* Visualizer Panel */}
+            <div className={`
+              h-full transition-all duration-300 bg-gray-50
+              ${viewMode === ViewMode.EDITOR ? 'hidden' : 'block'}
+              ${viewMode === ViewMode.SPLIT ? 'w-1/2' : 'w-full'}
+            `}>
+              <Visualizer 
+                content={content} 
+                focusedDate={selectedDate}
+                onAddEntry={handleAddEntry}
+                onSyncCalendar={(dateStr) => handleSyncCalendar('google', dateStr)}
+                onAddEventTask={handleAddEventTask}
+                onDeleteEvent={handleDeleteEvent}
+                onDeleteEventSubtask={handleDeleteEventSubtask}
+                onToggleItem={handleToggleItem}
+              />
+            </div>
+          </>
+        ) : (
+          <ProjectsView
+            viewMode={viewMode}
+            enabled={isSupabaseConfigured()}
+            userId={session?.user?.id ?? null}
           />
-        </div>
+        )}
 
       </main>
 
