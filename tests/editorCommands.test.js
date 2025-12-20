@@ -23,7 +23,7 @@ test('detectCommandAtCursor detects /subtask at start of file', () => {
 });
 
 test('detectCommandAtCursor detects /event and /done with trailing whitespace', () => {
-  const eventText = 'x /event\n';
+  const eventText = 'x /event   ';
   const eventDetected = detectCommandAtCursor(eventText, eventText.length);
   assert.ok(eventDetected);
   assert.equal(eventDetected.mode, 'event');
@@ -34,6 +34,20 @@ test('detectCommandAtCursor detects /event and /done with trailing whitespace', 
   assert.ok(doneDetected);
   assert.equal(doneDetected.mode, 'done');
   assert.equal(doneDetected.value, '/done');
+});
+
+test('detectCommandAtCursor detects /project and /proj with optional query', () => {
+  const t1 = 'note /project ';
+  const d1 = detectCommandAtCursor(t1, t1.length);
+  assert.ok(d1);
+  assert.equal(d1.mode, 'project');
+  assert.equal(d1.value, '/project');
+
+  const t2 = 'note /proj Assistant';
+  const d2 = detectCommandAtCursor(t2, t2.length);
+  assert.ok(d2);
+  assert.equal(d2.mode, 'project');
+  assert.equal(d2.value, '/proj');
 });
 
 test('detectCommandAtCursor does not match similar prefixes', () => {

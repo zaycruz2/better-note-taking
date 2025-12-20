@@ -22,6 +22,7 @@ import { updateSectionForDate, dedupeDateBlocks } from './utils/textManager';
 import { addEventTaskToContent, extractEventName } from './utils/eventTasks';
 import { deleteEventSubtask, deleteEvent } from './utils/doingDone.js';
 import { handleOAuthCallback, fetchEvents, isConnected, OAuthProvider, refreshOAuthStatus } from './services/oauth';
+import { fetchProjects } from './services/projects';
 import {
   getSupabase,
   isSupabaseConfigured,
@@ -34,6 +35,7 @@ import {
 } from './services/supabaseClient';
 import type { Session, User } from '@supabase/supabase-js';
 import { ViewMode } from './types';
+import type { ProjectRecord } from './types';
 
 const CONTENT_STORAGE_KEY = 'monofocus_content';
 const CONTENT_UPDATED_AT_KEY = 'monofocus_content_updated_at';
@@ -197,6 +199,7 @@ const App: React.FC = () => {
   const [content, setContent] = useState<string>(() => {
     return localStorage.getItem(CONTENT_STORAGE_KEY) || INITIAL_TEMPLATE;
   });
+  const [projectsForCommands, setProjectsForCommands] = useState<ProjectRecord[]>([]);
   const [viewMode, setViewMode] = useState<ViewMode>(ViewMode.SPLIT);
   const [mainView, setMainView] = useState<'daily' | 'projects'>('daily');
   const [isChatOpen, setIsChatOpen] = useState(false);
@@ -282,6 +285,29 @@ const App: React.FC = () => {
     refreshOAuthStatus().catch(() => null);
   }, [session?.access_token]);
 
+  // Load projects for /project slash command (Daily editor)
+  useEffect(() => {
+    if (!session?.user?.id) {
+      setProjectsForCommands([]);
+      return;
+    }
+    if (!isSupabaseConfigured()) {
+      setProjectsForCommands([]);
+      return;
+    }
+    let cancelled = false;
+    fetchProjects(session.user.id)
+      .then((rows) => {
+        if (!cancelled) setProjectsForCommands(rows || []);
+      })
+      .catch(() => {
+        if (!cancelled) setProjectsForCommands([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user?.id]);
+
   // Cloud hydration when session is available
   useEffect(() => {
     if (!session?.user?.id) return;
@@ -308,11 +334,14 @@ const App: React.FC = () => {
         if (cancelled) return;
 
         if (chosen.source === 'remote' && chosen.content) {
-          setLocalContentRecord(chosen.content, chosen.updatedAt || Date.now());
-          setContent(chosen.content);
+          // IMPORTANT: Always normalize spacing after hydration to prevent "growing blank lines"
+          // and to repair any legacy formatting issues from older versions.
+          const cleaned = dedupeDateBlocks(chosen.content);
+          setLocalContentRecord(cleaned, chosen.updatedAt || Date.now());
+          setContent(cleaned);
           setLastCloudSyncAt(chosen.updatedAt || null);
           // Update selected date to the best date from the hydrated content
-          const bestDate = getInitialSelectedDate(chosen.content);
+          const bestDate = getInitialSelectedDate(cleaned);
           setSelectedDate(bestDate);
         } else if (chosen.source === 'local' && local.content) {
           // Seed the cloud if it doesn't have anything yet
@@ -797,6 +826,7 @@ const App: React.FC = () => {
                 scrollToDate={selectedDate}
                 focusedDate={selectedDate}
                 onAddEventTask={handleAddEventTask}
+                projects={projectsForCommands}
               />
             </div>
 

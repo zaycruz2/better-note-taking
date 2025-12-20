@@ -1,4 +1,4 @@
-export type CommandMode = 'event' | 'subtask' | 'done';
+export type CommandMode = 'event' | 'subtask' | 'done' | 'project';
 
 export interface DetectedCommand {
   mode: CommandMode;
@@ -12,7 +12,7 @@ export interface DetectedCommand {
    * up to the cursor position.
    */
   end: number;
-  value: '/event' | '/subtask' | '/done';
+  value: '/event' | '/subtask' | '/done' | '/project' | '/proj';
 }
 
 /**
@@ -26,12 +26,14 @@ export function detectCommandAtCursor(text: string, cursor: number): DetectedCom
   if (cursor < 0 || cursor > text.length) return null;
 
   const before = text.slice(0, cursor);
-  // Allow start-of-string or whitespace before the command; allow any whitespace after.
-  const match = before.match(/(^|\s)(\/event|\/subtask|\/done)\s*$/);
+  // Allow start-of-string or whitespace before the command; allow optional query up to newline.
+  // Examples: "/done", "/subtask ", "/project foo"
+  // If anything follows the command token, it must begin with whitespace (so we don't match "/subtasks").
+  const match = before.match(/(^|\s)(\/event|\/subtask|\/done|\/project|\/proj)(\s+[^\n]*)?$/);
   if (!match) return null;
 
   const value = match[2] as DetectedCommand['value'];
-  const mode = value.slice(1) as CommandMode;
+  const mode = (value === '/proj' ? 'project' : (value.slice(1) as CommandMode));
 
   // Find the last occurrence of the matched command token; that's the slash index.
   const start = before.lastIndexOf(value);
