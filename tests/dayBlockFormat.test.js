@@ -52,4 +52,37 @@ test('dedupeDateBlocks does not add double blank lines between days', () => {
   assert.equal(/\n\n2025-12-17/.test(out), true);
 });
 
+test('dedupeDateBlocks is idempotent and does not grow blank lines between sections', () => {
+  const input = [
+    '2025-12-16',
+    '========================================',
+    '[EVENTS]',
+    'Event A',
+    '',
+    '[DOING]',
+    '- Task 1',
+    '',
+    '[DONE]',
+    '',
+    '[NOTES]',
+    'Note line',
+    '',
+  ].join('\n');
+
+  const once = dedupeDateBlocks(input);
+  const twice = dedupeDateBlocks(once);
+
+  // Idempotent: running again should not change anything.
+  assert.equal(twice, once);
+
+  // No triple-newline sequences between sections.
+  assert.equal(once.includes('\n\n\n'), false);
+
+  // Exactly one blank line between the main section headers.
+  assert.match(
+    once,
+    /\[EVENTS\]\nEvent A\n\n\[DOING\]\n- Task 1\n\n\[DONE\]\n\n\[NOTES\]\nNote line\n/
+  );
+});
+
 

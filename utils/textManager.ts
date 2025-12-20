@@ -123,6 +123,8 @@ export function dedupeDateBlocks(content: string): string {
   const days = new Map<string, DayAcc>();
   const dayOrder: string[] = [];
 
+  const isBlank = (s: string) => (s || '').trim() === '';
+
   let i = 0;
   while (i < lines.length) {
     const maybeDate = (lines[i] || '').trim();
@@ -191,8 +193,9 @@ export function dedupeDateBlocks(content: string): string {
         const cur = existing.sections.get(h)!;
         // Append non-duplicate lines (exact match) preserving order
         for (const line of incoming) {
-          if (line === '') {
-            cur.push(line);
+          // Preserve blank lines only if they add meaning (avoid unbounded growth)
+          if (isBlank(line)) {
+            if (cur.length === 0 || !isBlank(cur[cur.length - 1])) cur.push(line);
             continue;
           }
           if (!cur.includes(line)) cur.push(line);
@@ -219,17 +222,23 @@ export function dedupeDateBlocks(content: string): string {
       ...acc.order.filter((h) => !preferred.includes(h)),
     ];
 
+    const pushSectionBodyCanonical = (body: string[]) => {
+      // Idempotent formatting: trim only leading/trailing blank lines of the section body,
+      // but preserve internal blank lines.
+      let start = 0;
+      while (start < body.length && isBlank(body[start] || '')) start++;
+      let end = body.length - 1;
+      while (end >= start && isBlank(body[end] || '')) end--;
+      for (let bi = start; bi <= end; bi++) {
+        rebuilt.push(body[bi] || '');
+      }
+    };
+
     for (let hi = 0; hi < headers.length; hi++) {
       const h = headers[hi];
       rebuilt.push(h);
       const body = acc.sections.get(h) || [];
-      // Trim leading blank lines but preserve internal formatting
-      let started = false;
-      for (const line of body) {
-        if (!started && (line || '').trim() === '') continue;
-        started = true;
-        rebuilt.push(line);
-      }
+      pushSectionBodyCanonical(body);
       // Exactly one blank line between sections (but not double-blank before next date).
       if (hi !== headers.length - 1) rebuilt.push('');
     }
