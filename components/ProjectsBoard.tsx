@@ -1,7 +1,6 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import type { ProjectRecord, ProjectStatus } from '../types';
-import { getProjectNoteDatesChronological, insertProjectNoteDate } from '../utils/projectNotes';
 
 const STATUS_ORDER: ProjectStatus[] = ['active', 'shipped', 'paused', 'killed'];
 const STATUS_LABEL: Record<ProjectStatus, string> = {
@@ -36,7 +35,6 @@ type EditDraft = {
   description: string;
   status: ProjectStatus;
   blocking_or_reason: string;
-  notes: string;
 };
 
 function draftFromProject(p?: ProjectRecord): EditDraft {
@@ -46,7 +44,6 @@ function draftFromProject(p?: ProjectRecord): EditDraft {
     description: p?.description || '',
     status: p?.status || 'active',
     blocking_or_reason: p?.blocking_or_reason || '',
-    notes: p?.notes || '',
   };
 }
 
@@ -59,7 +56,7 @@ export default function ProjectsBoard(props: {
   selectedProjectId?: string | null;
   onSelectProject?: (projectId: string) => void;
   onRefresh: () => void | Promise<void>;
-  onCreate: (input: { name: string; description?: string; status?: ProjectStatus; blocking_or_reason?: string; notes?: string }) => Promise<ProjectRecord>;
+  onCreate: (input: { name: string; description?: string; status?: ProjectStatus; blocking_or_reason?: string }) => Promise<ProjectRecord>;
   onUpdate: (id: string, patch: Partial<ProjectRecord>) => Promise<ProjectRecord>;
   onRemove: (id: string) => Promise<void>;
 }) {
@@ -76,16 +73,12 @@ export default function ProjectsBoard(props: {
   const [saving, setSaving] = useState(false);
   const [statusPrompt, setStatusPrompt] = useState<{ id: string; next: ProjectStatus } | null>(null);
   const [statusReason, setStatusReason] = useState('');
-  const notesRef = useRef<HTMLTextAreaElement>(null);
-  const [insertDateDraft, setInsertDateDraft] = useState(() => new Date().toISOString().slice(0, 10));
 
   const openNew = () => {
     setEditing(draftFromProject());
-    setInsertDateDraft(new Date().toISOString().slice(0, 10));
   };
   const openEdit = (p: ProjectRecord) => {
     setEditing(draftFromProject(p));
-    setInsertDateDraft(new Date().toISOString().slice(0, 10));
   };
 
   const submitEdit = async () => {
@@ -100,28 +93,24 @@ export default function ProjectsBoard(props: {
     setSaving(true);
     try {
       if (editing.id) {
-        const patch: Partial<ProjectRecord> = {
+        await onUpdate(editing.id, {
           name,
           description: editing.description.trim() || null,
           status: editing.status,
           blocking_or_reason: reason || null,
-        };
-        if (editing.notes.trim()) patch.notes = editing.notes;
-        await onUpdate(editing.id, patch);
+        });
       } else {
         const createInput: {
           name: string;
           description?: string;
           status?: ProjectStatus;
           blocking_or_reason?: string;
-          notes?: string;
         } = {
           name,
           description: editing.description.trim() || undefined,
           status: editing.status,
           blocking_or_reason: reason || undefined,
         };
-        if (editing.notes.trim()) createInput.notes = editing.notes;
         await onCreate(createInput);
       }
       setEditing(null);
@@ -325,15 +314,14 @@ export default function ProjectsBoard(props: {
       {/* Create/Edit modal */}
       {editing && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl overflow-hidden">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden">
             <div className="p-6 border-b border-gray-100 flex items-center justify-between">
               <div className="font-bold text-gray-900">{editing.id ? 'Edit project' : 'New project'}</div>
               <button className="text-gray-400 hover:text-gray-700" onClick={() => setEditing(null)}>
                 ✕
               </button>
             </div>
-            <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Left column: project fields */}
+            <div className="p-6">
               <div className="space-y-4">
                 <div>
                   <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1">Name</label>
@@ -385,85 +373,7 @@ export default function ProjectsBoard(props: {
                 )}
               </div>
 
-              {/* Right column: project notes */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm font-semibold text-gray-800">Project notes</div>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="date"
-                      value={insertDateDraft}
-                      onChange={(e) => setInsertDateDraft(e.target.value)}
-                      className="text-xs border border-gray-200 rounded px-2 py-1 bg-white"
-                    />
-                    <button
-                      type="button"
-                      className="px-2 py-1 text-xs rounded bg-gray-900 text-white hover:bg-gray-800"
-                      onClick={() => {
-                        const dateStr = insertDateDraft;
-                        const cursor = notesRef.current?.selectionStart ?? 0;
-                        const res = insertProjectNoteDate({ notes: editing.notes, dateStr, cursor });
-                        setEditing((prev) => (prev ? { ...prev, notes: res.notes } : prev));
-                        requestAnimationFrame(() => {
-                          const el = notesRef.current;
-                          if (!el) return;
-                          el.focus();
-                          el.setSelectionRange(res.cursor, res.cursor);
-                        });
-                      }}
-                      disabled={!insertDateDraft}
-                      title="Insert date header"
-                    >
-                      Insert date
-                    </button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-[1fr_160px] gap-3">
-                  <textarea
-                    ref={notesRef}
-                    value={editing.notes}
-                    onChange={(e) => setEditing((prev) => (prev ? { ...prev, notes: e.target.value } : prev))}
-                    className="w-full min-h-[260px] px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-gray-900"
-                    placeholder={`2025-12-19\n========================================\nDid X\n\n2025-12-20\n========================================\nDid Y`}
-                    spellCheck={false}
-                  />
-
-                  <div className="border border-gray-200 rounded-lg p-2 bg-gray-50">
-                    <div className="text-[11px] font-semibold text-gray-600 uppercase tracking-wide mb-2">
-                      Timeline
-                    </div>
-                    <div className="space-y-1 max-h-[260px] overflow-y-auto">
-                      {getProjectNoteDatesChronological(editing.notes).length === 0 ? (
-                        <div className="text-xs text-gray-400 italic">No dates yet</div>
-                      ) : (
-                        getProjectNoteDatesChronological(editing.notes).map((d) => (
-                          <button
-                            key={d}
-                            type="button"
-                            className="w-full text-left text-xs px-2 py-1 rounded hover:bg-white"
-                            onClick={() => {
-                              const idx = editing.notes.search(new RegExp(`^${d}$`, 'm'));
-                              if (idx === -1) return;
-                              requestAnimationFrame(() => {
-                                const el = notesRef.current;
-                                if (!el) return;
-                                el.focus();
-                                el.setSelectionRange(idx, idx);
-                              });
-                            }}
-                            title={`Jump to ${d}`}
-                          >
-                            {d}
-                          </button>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="md:col-span-2 flex gap-3 pt-2">
+              <div className="flex gap-3 pt-6">
                 <button
                   className="flex-1 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 transition-colors text-sm font-medium"
                   onClick={() => setEditing(null)}
