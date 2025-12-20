@@ -1,3 +1,5 @@
+import { extractDatesFromContent } from './constants.ts';
+
 export const updateSectionForDate = (
   content: string, 
   date: string, 
@@ -248,3 +250,79 @@ export function dedupeDateBlocks(content: string): string {
 
   return rebuilt.join('\n');
 }
+
+function findDateBlockRange(lines: string[], dateStr: string): { start: number; end: number } | null {
+  const isDateHeader = (line: string) => /^\d{4}-\d{2}-\d{2}/.test((line || '').trim());
+
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if ((lines[i] || '').trim().startsWith(dateStr)) {
+      start = i;
+      break;
+    }
+  }
+  if (start === -1) return null;
+
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (isDateHeader(lines[i] || '')) {
+      end = i;
+      break;
+    }
+  }
+  return { start, end };
+}
+
+function getSectionLinesForDate(params: { content: string; dateStr: string; header: string }): string[] {
+  const { content, dateStr, header } = params;
+  const lines = (content || '').split('\n');
+  const block = findDateBlockRange(lines, dateStr);
+  if (!block) return [];
+
+  const isHeader = (line: string) => /^\[(.*?)\]$/.test((line || '').trim());
+
+  let headerIndex = -1;
+  for (let i = block.start; i < block.end; i++) {
+    if ((lines[i] || '').trim() === header) {
+      headerIndex = i;
+      break;
+    }
+  }
+  if (headerIndex === -1) return [];
+
+  let endIndex = block.end;
+  for (let i = headerIndex + 1; i < block.end; i++) {
+    if (isHeader(lines[i] || '')) {
+      endIndex = i;
+      break;
+    }
+  }
+
+  const out: string[] = [];
+  for (let i = headerIndex + 1; i < endIndex; i++) {
+    const t = (lines[i] || '').trim();
+    if (!t) continue;
+    if (t.startsWith('==')) continue;
+    out.push(t);
+  }
+  return out;
+}
+
+/**
+ * Return unfinished DOING lines to carry forward into `toDateStr`.
+ *
+ * Rules:
+ * - Look at the most recent date strictly before `toDateStr`
+ * - Pull non-empty lines from [DOING]
+ * - Exclude completed lines starting with "x "
+ */
+export function getCarryOverDoingItems(content: string, toDateStr: string): string[] {
+  if (!content || !toDateStr) return [];
+  const dates = extractDatesFromContent(content);
+  const prev = dates.find((d) => d < toDateStr);
+  if (!prev) return [];
+
+  const doing = getSectionLinesForDate({ content, dateStr: prev, header: '[DOING]' });
+  return doing.filter((l) => !/^x\s+/i.test((l || '').trim()));
+}
+

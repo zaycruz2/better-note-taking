@@ -18,7 +18,7 @@ import ChatInterface from './components/ChatInterface';
 import SettingsModal from './components/SettingsModal';
 import AddEventTaskModal from './components/AddEventTaskModal';
 import { INITIAL_TEMPLATE, extractDatesFromContent, contentHasDate, buildDayBlock } from './utils/constants';
-import { updateSectionForDate, dedupeDateBlocks } from './utils/textManager';
+import { updateSectionForDate, dedupeDateBlocks, getCarryOverDoingItems } from './utils/textManager';
 import { addEventTaskToContent, extractEventName } from './utils/eventTasks';
 import { deleteEventSubtask, deleteEvent } from './utils/doingDone.js';
 import { handleOAuthCallback, fetchEvents, isConnected, OAuthProvider, refreshOAuthStatus } from './services/oauth';
@@ -406,6 +406,20 @@ const App: React.FC = () => {
     } catch { /* ignore */ }
   }, [selectedDate]);
 
+  // Auto-create today's entry (with DOING carry-over) even if you're viewing another day.
+  useEffect(() => {
+    if (isHydratingFromCloud) return;
+    const today = new Date().toISOString().split('T')[0];
+    setContent((prev) => {
+      const deduped = dedupeDateBlocks(prev);
+      if (contentHasDate(deduped, today)) return deduped === prev ? prev : deduped;
+
+      const carryOver = getCarryOverDoingItems(deduped, today);
+      const newEntry = buildDayBlock({ dateStr: today, doing: carryOver });
+      return appendDayBlockWithSingleGap(deduped, newEntry);
+    });
+  }, [isHydratingFromCloud]);
+
   // Auto-insert missing day entry when navigating to a date that doesn't exist
   useEffect(() => {
     // Skip during initial hydration to avoid race conditions
@@ -421,34 +435,7 @@ const App: React.FC = () => {
         return deduped === prev ? prev : deduped;
       }
 
-      // Extract carry-over items from the previous day inline (based on latest content)
-      const getCarryOverItemsInline = (fullContent: string, currentDateStr: string): string[] => {
-        const dateRegex = /^(\d{4}-\d{2}-\d{2})/gm;
-        const indices: {date: string, index: number}[] = [];
-        let match;
-        while ((match = dateRegex.exec(fullContent)) !== null) {
-          indices.push({ date: match[1], index: match.index });
-        }
-        indices.sort((a, b) => a.index - b.index);
-        const currentIndex = indices.findIndex(i => i.date === currentDateStr);
-        let prevBlockContent = "";
-        if (currentIndex > 0) {
-          const prevIdx = indices[currentIndex - 1];
-          const currIdx = indices[currentIndex];
-          prevBlockContent = fullContent.substring(prevIdx.index, currIdx.index);
-        } else if (currentIndex === -1 && indices.length > 0) {
-          const last = indices[indices.length - 1];
-          prevBlockContent = fullContent.substring(last.index);
-        } else {
-          return [];
-        }
-        const doingMatch = prevBlockContent.match(/\[DOING\]([\s\S]*?)(\[|$)/);
-        if (!doingMatch) return [];
-        const lines = doingMatch[1].split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('=='));
-        return lines.filter(l => !l.toLowerCase().startsWith('x '));
-      };
-
-      const carryOver = getCarryOverItemsInline(deduped, selectedDate);
+      const carryOver = getCarryOverDoingItems(deduped, selectedDate);
       const doingLines = carryOver.length > 0 ? carryOver : [];
       const newEntry = buildDayBlock({ dateStr: selectedDate, doing: doingLines });
 
@@ -469,40 +456,6 @@ const App: React.FC = () => {
     }
   };
 
-  // Helper to extract uncompleted items from a previous date
-  const getCarryOverItems = (fullContent: string, currentDateStr: string): string[] => {
-    const dateRegex = /^(\d{4}-\d{2}-\d{2})/gm;
-    const indices: {date: string, index: number}[] = [];
-    let match;
-    while ((match = dateRegex.exec(fullContent)) !== null) {
-        indices.push({ date: match[1], index: match.index });
-    }
-
-    indices.sort((a, b) => a.index - b.index);
-
-    const currentIndex = indices.findIndex(i => i.date === currentDateStr);
-    
-    let prevBlockContent = "";
-    if (currentIndex > 0) {
-        const prev = indices[currentIndex - 1];
-        const curr = indices[currentIndex];
-        prevBlockContent = fullContent.substring(prev.index, curr.index);
-    } else if (currentIndex === -1 && indices.length > 0) {
-        const last = indices[indices.length - 1];
-        prevBlockContent = fullContent.substring(last.index);
-    } else {
-        return [];
-    }
-
-    const doingMatch = prevBlockContent.match(/\[DOING\]([\s\S]*?)(\[|$)/);
-    if (!doingMatch) return [];
-
-    const lines = doingMatch[1].split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('=='));
-    const incomplete = lines.filter(l => !l.toLowerCase().startsWith('x '));
-    
-    return incomplete;
-  };
-
   // Add Entry for a date if it doesn't exist
   const handleAddEntry = (dateStr: string) => {
     setContent(prev => {
@@ -512,7 +465,7 @@ const App: React.FC = () => {
           return deduped === prev ? prev : deduped;
         }
         
-        const carryOver = getCarryOverItems(deduped, dateStr);
+        const carryOver = getCarryOverDoingItems(deduped, dateStr);
         const doingLines = carryOver.length > 0 ? carryOver : [];
         const newEntry = buildDayBlock({ dateStr, doing: doingLines });
         
