@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { ProjectRecord } from '../types';
-import { getProjectNoteDatesChronological, insertProjectNoteDate } from '../utils/projectNotes';
+import { insertProjectNoteDate } from '../utils/projectNotes';
 import { detectCommandAtCursor } from '../utils/editorCommands';
 
 export default function ProjectNotesPanel(props: {
@@ -55,7 +55,6 @@ export default function ProjectNotesPanel(props: {
     return () => clearTimeout(t);
   }, [draft, dirty, enabled, onUpdateNotes, project?.id]);
 
-  const dates = useMemo(() => getProjectNoteDatesChronological(draft), [draft]);
 
   const getCaretCoordinates = () => {
     const textarea = textareaRef.current;
@@ -282,7 +281,7 @@ export default function ProjectNotesPanel(props: {
           </div>
         )}
 
-        <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[1fr_200px]">
+        <div className="flex-1 min-h-0">
           <div className="relative h-full w-full">
             <textarea
               ref={textareaRef}
@@ -327,38 +326,6 @@ export default function ProjectNotesPanel(props: {
                     </button>
                   ))}
                 </div>
-              </div>
-            )}
-          </div>
-
-          <div className="border-l border-gray-200 bg-white p-4 overflow-y-auto">
-            <div className="text-[11px] font-semibold text-gray-600 uppercase tracking-wide mb-2">
-              Timeline
-            </div>
-            {dates.length === 0 ? (
-              <div className="text-xs text-gray-400 italic">No dates yet</div>
-            ) : (
-              <div className="space-y-1">
-                {dates.map((d) => (
-                  <button
-                    key={d}
-                    type="button"
-                    className="w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-50"
-                    onClick={() => {
-                      const idx = draft.search(new RegExp(`^${d}$`, 'm'));
-                      if (idx === -1) return;
-                      requestAnimationFrame(() => {
-                        const el = textareaRef.current;
-                        if (!el) return;
-                        el.focus();
-                        el.setSelectionRange(idx, idx);
-                      });
-                    }}
-                    title={`Jump to ${d}`}
-                  >
-                    {d}
-                  </button>
-                ))}
               </div>
             )}
           </div>
