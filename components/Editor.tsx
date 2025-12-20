@@ -2,7 +2,6 @@ import React, { useRef, useEffect, useState } from 'react';
 import { extractEventName, eventToTag } from '../utils/eventTasks';
 import { getDoingItemsForDate, moveDoingItemToDone, extractTagsFromLine, tagToLabel } from '../utils/doingDone.js';
 import { detectCommandAtCursor, stripRange } from '../utils/editorCommands';
-import type { ProjectRecord } from '../types';
 
 interface EditorProps {
   content: string;
@@ -11,17 +10,15 @@ interface EditorProps {
   scrollToDate?: string;
   focusedDate: string;
   onAddEventTask?: (dateStr: string, eventRawLine: string) => void;
-  projects?: ProjectRecord[];
 }
 
-const Editor: React.FC<EditorProps> = ({ content, onChange, className = '', scrollToDate, focusedDate, onAddEventTask, projects = [] }) => {
+const Editor: React.FC<EditorProps> = ({ content, onChange, className = '', scrollToDate, focusedDate, onAddEventTask }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [showCommandMenu, setShowCommandMenu] = useState(false);
   const [commandPosition, setCommandPosition] = useState({ top: 0, left: 0 });
   const [filteredEvents, setFilteredEvents] = useState<string[]>([]);
   const [filteredDoing, setFilteredDoing] = useState<string[]>([]);
-  const [filteredProjects, setFilteredProjects] = useState<ProjectRecord[]>([]);
-  const [commandMode, setCommandMode] = useState<'event' | 'done' | 'subtask' | 'project'>('event');
+  const [commandMode, setCommandMode] = useState<'event' | 'done' | 'subtask'>('event');
   const [commandDate, setCommandDate] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [cursorIndex, setCursorIndex] = useState(0);
@@ -194,27 +191,6 @@ const Editor: React.FC<EditorProps> = ({ content, onChange, className = '', scro
           return;
         }
       }
-
-      if (detected.mode === 'project') {
-        const cmdText = val.slice(detected.start, detected.end);
-        const query = cmdText.replace(/^\/(project|proj)\s*/i, '').trim().toLowerCase();
-        const list = (projects || [])
-          .filter((p) => !!p?.name)
-          .filter((p) => (query ? p.name.toLowerCase().includes(query) : true))
-          .sort((a, b) => a.name.localeCompare(b.name));
-
-        if (list.length > 0) {
-          setFilteredProjects(list);
-          setCommandMode('project');
-          setCommandDate(getCurrentDayDate(stripped.text, stripped.cursor) || focusedDate);
-          setSelectedIndex(0);
-          setCommandTrigger({ start: detected.start, end: detected.end });
-          const coords = getCaretCoordinates();
-          setCommandPosition(coords);
-          setShowCommandMenu(true);
-        }
-        return;
-      }
     }
 
     if (showCommandMenu) {
@@ -226,9 +202,7 @@ const Editor: React.FC<EditorProps> = ({ content, onChange, className = '', scro
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (!showCommandMenu) return;
 
-    if (commandMode === 'project') {
-      if (!filteredProjects || filteredProjects.length === 0) return;
-    } else if (commandMode === 'done') {
+    if (commandMode === 'done') {
       if (!filteredDoing || filteredDoing.length === 0) return;
     } else {
       if (!filteredEvents || filteredEvents.length === 0) return;
@@ -237,25 +211,19 @@ const Editor: React.FC<EditorProps> = ({ content, onChange, className = '', scro
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       const len =
-        commandMode === 'project' ? filteredProjects.length : commandMode === 'done' ? filteredDoing.length : filteredEvents.length;
+        commandMode === 'done' ? filteredDoing.length : filteredEvents.length;
       setSelectedIndex((prev) => (prev + 1) % len);
       return;
     }
     if (e.key === 'ArrowUp') {
       e.preventDefault();
       const len =
-        commandMode === 'project' ? filteredProjects.length : commandMode === 'done' ? filteredDoing.length : filteredEvents.length;
+        commandMode === 'done' ? filteredDoing.length : filteredEvents.length;
       setSelectedIndex((prev) => (prev - 1 + len) % len);
       return;
     }
     if (e.key === 'Enter') {
       e.preventDefault();
-      if (commandMode === 'project') {
-        const selected = filteredProjects[selectedIndex];
-        if (!selected) return;
-        insertProjectReference(selected);
-        return;
-      }
       if (commandMode === 'done') {
         const selected = filteredDoing[selectedIndex];
         if (!selected) return;
@@ -360,31 +328,6 @@ const Editor: React.FC<EditorProps> = ({ content, onChange, className = '', scro
     });
   };
 
-  const insertProjectReference = (project: ProjectRecord) => {
-    if (!textareaRef.current) return;
-    if (!commandTrigger) return;
-
-    const textarea = textareaRef.current;
-    const val = content;
-
-    // Remove the command trigger (including any trailing query text)
-    const textBefore = val.substring(0, commandTrigger.start);
-    const textAfter = val.substring(commandTrigger.end);
-
-    const tag = `[[project:${project.id}|${project.name}]] `;
-    const newContent = textBefore + tag + textAfter;
-
-    onChange(newContent);
-    setShowCommandMenu(false);
-    setCommandTrigger(null);
-
-    requestAnimationFrame(() => {
-      textarea.focus();
-      const newCursorPos = textBefore.length + tag.length;
-      textarea.setSelectionRange(newCursorPos, newCursorPos);
-    });
-  };
-
   return (
     <div className={`relative h-full w-full bg-paper ${className}`}>
       <textarea
@@ -399,7 +342,7 @@ const Editor: React.FC<EditorProps> = ({ content, onChange, className = '', scro
         }}
         className="w-full h-full p-8 font-mono text-sm md:text-base leading-relaxed resize-none outline-none text-ink bg-transparent selection:bg-yellow-200"
         spellCheck={false}
-        placeholder="Start typing your tasks... Type /event to tag an event, /subtask to add a task under an event, /done to move a task into DONE, or /project to insert a project reference."
+        placeholder="Start typing your tasks... Type /event to tag an event, /subtask to add a task under an event, or /done to move a task into DONE."
       />
 
       {/* CLI Popover */}
@@ -414,13 +357,7 @@ const Editor: React.FC<EditorProps> = ({ content, onChange, className = '', scro
           }}
         >
           <div className="text-xs font-bold text-gray-400 uppercase mb-2 px-2">
-            {commandMode === 'event'
-              ? 'Tag Event'
-              : commandMode === 'subtask'
-                ? 'Add subtask to event'
-                : commandMode === 'done'
-                  ? 'Mark Done'
-                  : 'Insert Project Reference'}
+            {commandMode === 'event' ? 'Tag Event' : commandMode === 'subtask' ? 'Add subtask to event' : 'Mark Done'}
           </div>
           <div className="max-h-60 overflow-y-auto">
             {(commandMode === 'event' || commandMode === 'subtask') && filteredEvents.map((ev, i) => (
@@ -453,19 +390,6 @@ const Editor: React.FC<EditorProps> = ({ content, onChange, className = '', scro
                 </button>
               );
             })}
-
-            {commandMode === 'project' && filteredProjects.map((p, i) => (
-              <button
-                key={p.id}
-                className={`w-full text-left px-3 py-2 text-sm rounded transition-colors truncate font-mono block ${
-                  i === selectedIndex ? 'bg-purple-50 text-purple-700' : 'hover:bg-purple-50 hover:text-purple-700'
-                }`}
-                onClick={() => insertProjectReference(p)}
-                title={p.name}
-              >
-                {p.name}
-              </button>
-            ))}
           </div>
         </div>
       )}

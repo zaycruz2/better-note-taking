@@ -44,6 +44,7 @@ export default function ProjectsView(props: {
       >
         <ProjectNotesPanel
           project={selectedProject}
+          allProjects={projects}
           enabled={enabled}
           onUpdateNotes={async (id, notes) => {
             await update(id, { notes });
