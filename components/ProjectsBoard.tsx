@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import type { ProjectRecord, ProjectStatus } from '../types';
 import { getProjectNoteDatesChronological, insertProjectNoteDate } from '../utils/projectNotes';
 
@@ -56,12 +56,14 @@ export default function ProjectsBoard(props: {
   error: string | null;
   projects: ProjectRecord[];
   byStatus: Record<ProjectStatus, ProjectRecord[]>;
+  selectedProjectId?: string | null;
+  onSelectProject?: (projectId: string) => void;
   onRefresh: () => void | Promise<void>;
   onCreate: (input: { name: string; description?: string; status?: ProjectStatus; blocking_or_reason?: string; notes?: string }) => Promise<ProjectRecord>;
   onUpdate: (id: string, patch: Partial<ProjectRecord>) => Promise<ProjectRecord>;
   onRemove: (id: string) => Promise<void>;
 }) {
-  const { enabled, loading, error, projects, byStatus, onRefresh, onCreate, onUpdate, onRemove } = props;
+  const { enabled, loading, error, projects, byStatus, selectedProjectId, onSelectProject, onRefresh, onCreate, onUpdate, onRemove } = props;
 
   const [collapsed, setCollapsed] = useState<Record<ProjectStatus, boolean>>({
     active: false,
@@ -189,8 +191,12 @@ export default function ProjectsBoard(props: {
                   return (
                     <div
                       key={p.id}
-                      className="bg-white rounded-lg border border-gray-200 p-4 hover:shadow-sm transition-shadow cursor-pointer"
-                      onClick={() => openEdit(p)}
+                      className={`bg-white rounded-lg border p-4 hover:shadow-sm transition-shadow cursor-pointer ${
+                        selectedProjectId === p.id ? 'border-gray-900' : 'border-gray-200'
+                      }`}
+                      onClick={() => {
+                        if (onSelectProject) onSelectProject(p.id);
+                      }}
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
@@ -211,6 +217,17 @@ export default function ProjectsBoard(props: {
                         </div>
 
                         <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            className="p-1 rounded hover:bg-gray-100 text-gray-500"
+                            title="Edit project"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openEdit(p);
+                            }}
+                            disabled={!enabled}
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </button>
                           <select
                             value={p.status}
                             className="text-xs border border-gray-200 rounded px-2 py-1 bg-white"

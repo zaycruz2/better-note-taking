@@ -1,9 +1,8 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ViewMode } from '../types';
 import { useProjects } from '../services/useProjects';
-import ProjectsEditor from './ProjectsEditor';
 import ProjectsBoard from './ProjectsBoard';
-import { formatProjectsAsText } from '../utils/projectsText';
+import ProjectNotesPanel from './ProjectNotesPanel';
 
 export default function ProjectsView(props: {
   viewMode: ViewMode;
@@ -14,7 +13,24 @@ export default function ProjectsView(props: {
 
   const { projects, byStatus, loading, error, refresh, create, update, remove } = useProjects({ userId, enabled });
 
-  const text = useMemo(() => formatProjectsAsText(projects), [projects]);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!projects || projects.length === 0) {
+      setSelectedProjectId(null);
+      return;
+    }
+    // Keep current selection if it still exists; otherwise pick the first active project, else first.
+    if (selectedProjectId && projects.some((p) => p.id === selectedProjectId)) return;
+    const active = projects.find((p) => p.status === 'active');
+    setSelectedProjectId((active || projects[0]).id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projects]);
+
+  const selectedProject = useMemo(
+    () => projects.find((p) => p.id === selectedProjectId) || null,
+    [projects, selectedProjectId]
+  );
 
   return (
     <>
@@ -26,7 +42,13 @@ export default function ProjectsView(props: {
           ${viewMode === ViewMode.SPLIT ? 'w-1/2 border-r border-gray-200' : 'w-full'}
         `}
       >
-        <ProjectsEditor text={text} />
+        <ProjectNotesPanel
+          project={selectedProject}
+          enabled={enabled}
+          onUpdateNotes={async (id, notes) => {
+            await update(id, { notes });
+          }}
+        />
       </div>
 
       {/* Right parsed UI panel */}
@@ -43,6 +65,8 @@ export default function ProjectsView(props: {
           error={error}
           projects={projects}
           byStatus={byStatus}
+          selectedProjectId={selectedProjectId}
+          onSelectProject={(id) => setSelectedProjectId(id)}
           onRefresh={() => refresh()}
           onCreate={create}
           onUpdate={(id, patch) => update(id, patch)}
