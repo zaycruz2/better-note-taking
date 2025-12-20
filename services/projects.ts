@@ -23,6 +23,10 @@ function isMissingNotesColumnError(e: any): boolean {
   return msg.includes('projects.notes') && msg.includes('does not exist');
 }
 
+function missingNotesColumnMigrationError(): Error {
+  return new Error('Database is missing `projects.notes`. Run: ALTER TABLE public.projects ADD COLUMN notes text; then reload.');
+}
+
 const PROJECT_SELECT_WITH_NOTES =
   'id, user_id, name, description, status, blocking_or_reason, notes, created_at, updated_at';
 const PROJECT_SELECT_NO_NOTES =
@@ -53,41 +57,47 @@ export async function fetchProjects(userId: string): Promise<ProjectRecord[]> {
 
 export async function createProject(input: ProjectUpsertInput): Promise<ProjectRecord> {
   const now = new Date().toISOString();
-  const payload = {
+  const wantsNotes = typeof input.notes === 'string' && input.notes.trim().length > 0;
+
+  const payloadBase = {
     user_id: input.user_id,
     name: input.name,
     description: input.description ?? null,
     status: input.status ?? 'active',
     blocking_or_reason: input.blocking_or_reason ?? null,
-    notes: input.notes ?? null,
     updated_at: now,
   };
 
+  if (wantsNotes) {
+    const payload = { ...payloadBase, notes: input.notes ?? null };
+    const { data, error } = await getSupabase()
+      .from('projects')
+      .insert(payload)
+      .select(PROJECT_SELECT_WITH_NOTES)
+      .single();
+
+    if (error) {
+      if (isMissingNotesColumnError(error)) throw missingNotesColumnMigrationError();
+      throw normalizeSupabaseError(error);
+    }
+    return data as ProjectRecord;
+  }
+
   const { data, error } = await getSupabase()
     .from('projects')
-    .insert(payload)
-    .select(PROJECT_SELECT_WITH_NOTES)
+    .insert(payloadBase)
+    .select(PROJECT_SELECT_NO_NOTES)
     .single();
 
-  if (error) {
-    if (isMissingNotesColumnError(error)) {
-      // Retry without notes if the DB hasn't been migrated yet.
-      const { notes: _notes, ...payloadWithoutNotes } = payload as any;
-      const fallback = await getSupabase()
-        .from('projects')
-        .insert(payloadWithoutNotes)
-        .select(PROJECT_SELECT_NO_NOTES)
-        .single();
-      if (fallback.error) throw normalizeSupabaseError(fallback.error);
-      return ({ ...(fallback.data as any), notes: null }) as ProjectRecord;
-    }
-    throw normalizeSupabaseError(error);
-  }
-  return data as ProjectRecord;
+  if (error) throw normalizeSupabaseError(error);
+  return ({ ...(data as any), notes: null }) as ProjectRecord;
 }
 
 export async function updateProject(id: string, patch: ProjectUpdateInput): Promise<ProjectRecord> {
   const now = new Date().toISOString();
+
+  const patchHasNotes = Object.prototype.hasOwnProperty.call(patch || {}, 'notes');
+
   const { data, error } = await getSupabase()
     .from('projects')
     .update({ ...patch, updated_at: now })
@@ -97,7 +107,10 @@ export async function updateProject(id: string, patch: ProjectUpdateInput): Prom
 
   if (error) {
     if (isMissingNotesColumnError(error)) {
-      // Retry without notes if the DB hasn't been migrated yet.
+      // If the caller is trying to write notes, make it explicit that the DB needs migration.
+      if (patchHasNotes) throw missingNotesColumnMigrationError();
+
+      // Otherwise retry without notes so the rest of the app continues working.
       const { notes: _notes, ...patchWithoutNotes } = (patch || {}) as any;
       const fallback = await getSupabase()
         .from('projects')

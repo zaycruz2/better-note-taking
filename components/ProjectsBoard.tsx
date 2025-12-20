@@ -100,21 +100,29 @@ export default function ProjectsBoard(props: {
     setSaving(true);
     try {
       if (editing.id) {
-        await onUpdate(editing.id, {
+        const patch: Partial<ProjectRecord> = {
           name,
           description: editing.description.trim() || null,
           status: editing.status,
           blocking_or_reason: reason || null,
-          notes: editing.notes,
-        });
+        };
+        if (editing.notes.trim()) patch.notes = editing.notes;
+        await onUpdate(editing.id, patch);
       } else {
-        await onCreate({
+        const createInput: {
+          name: string;
+          description?: string;
+          status?: ProjectStatus;
+          blocking_or_reason?: string;
+          notes?: string;
+        } = {
           name,
           description: editing.description.trim() || undefined,
           status: editing.status,
           blocking_or_reason: reason || undefined,
-          notes: editing.notes,
-        });
+        };
+        if (editing.notes.trim()) createInput.notes = editing.notes;
+        await onCreate(createInput);
       }
       setEditing(null);
     } finally {
