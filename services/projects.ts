@@ -17,14 +17,37 @@ function normalizeSupabaseError(e: any): Error {
   return new Error(msg);
 }
 
+function isMissingNotesColumnError(e: any): boolean {
+  const msg = (e?.message || '').toString().toLowerCase();
+  // PostgREST typically returns messages like: "column projects.notes does not exist"
+  return msg.includes('projects.notes') && msg.includes('does not exist');
+}
+
+const PROJECT_SELECT_WITH_NOTES =
+  'id, user_id, name, description, status, blocking_or_reason, notes, created_at, updated_at';
+const PROJECT_SELECT_NO_NOTES =
+  'id, user_id, name, description, status, blocking_or_reason, created_at, updated_at';
+
 export async function fetchProjects(userId: string): Promise<ProjectRecord[]> {
   const { data, error } = await getSupabase()
     .from('projects')
-    .select('id, user_id, name, description, status, blocking_or_reason, notes, created_at, updated_at')
+    .select(PROJECT_SELECT_WITH_NOTES)
     .eq('user_id', userId)
     .order('updated_at', { ascending: false });
 
-  if (error) throw normalizeSupabaseError(error);
+  if (error) {
+    if (isMissingNotesColumnError(error)) {
+      const fallback = await getSupabase()
+        .from('projects')
+        .select(PROJECT_SELECT_NO_NOTES)
+        .eq('user_id', userId)
+        .order('updated_at', { ascending: false });
+      if (fallback.error) throw normalizeSupabaseError(fallback.error);
+      // Back-compat: populate notes as null in-memory.
+      return ((fallback.data || []) as any[]).map((p) => ({ ...p, notes: null })) as ProjectRecord[];
+    }
+    throw normalizeSupabaseError(error);
+  }
   return (data || []) as ProjectRecord[];
 }
 
@@ -43,10 +66,23 @@ export async function createProject(input: ProjectUpsertInput): Promise<ProjectR
   const { data, error } = await getSupabase()
     .from('projects')
     .insert(payload)
-    .select('id, user_id, name, description, status, blocking_or_reason, notes, created_at, updated_at')
+    .select(PROJECT_SELECT_WITH_NOTES)
     .single();
 
-  if (error) throw normalizeSupabaseError(error);
+  if (error) {
+    if (isMissingNotesColumnError(error)) {
+      // Retry without notes if the DB hasn't been migrated yet.
+      const { notes: _notes, ...payloadWithoutNotes } = payload as any;
+      const fallback = await getSupabase()
+        .from('projects')
+        .insert(payloadWithoutNotes)
+        .select(PROJECT_SELECT_NO_NOTES)
+        .single();
+      if (fallback.error) throw normalizeSupabaseError(fallback.error);
+      return ({ ...(fallback.data as any), notes: null }) as ProjectRecord;
+    }
+    throw normalizeSupabaseError(error);
+  }
   return data as ProjectRecord;
 }
 
@@ -56,10 +92,24 @@ export async function updateProject(id: string, patch: ProjectUpdateInput): Prom
     .from('projects')
     .update({ ...patch, updated_at: now })
     .eq('id', id)
-    .select('id, user_id, name, description, status, blocking_or_reason, notes, created_at, updated_at')
+    .select(PROJECT_SELECT_WITH_NOTES)
     .single();
 
-  if (error) throw normalizeSupabaseError(error);
+  if (error) {
+    if (isMissingNotesColumnError(error)) {
+      // Retry without notes if the DB hasn't been migrated yet.
+      const { notes: _notes, ...patchWithoutNotes } = (patch || {}) as any;
+      const fallback = await getSupabase()
+        .from('projects')
+        .update({ ...patchWithoutNotes, updated_at: now })
+        .eq('id', id)
+        .select(PROJECT_SELECT_NO_NOTES)
+        .single();
+      if (fallback.error) throw normalizeSupabaseError(fallback.error);
+      return ({ ...(fallback.data as any), notes: null }) as ProjectRecord;
+    }
+    throw normalizeSupabaseError(error);
+  }
   return data as ProjectRecord;
 }
 

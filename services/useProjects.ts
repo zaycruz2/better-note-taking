@@ -17,7 +17,12 @@ export function useProjects(params: { userId: string | null; enabled: boolean })
       const rows = await fetchProjects(userId);
       setProjects(rows);
     } catch (e: any) {
-      setError(e?.message || String(e));
+      const msg = (e?.message || String(e)).toString();
+      if (msg.toLowerCase().includes('projects.notes') && msg.toLowerCase().includes('does not exist')) {
+        setError('Database is missing `projects.notes`. Run: ALTER TABLE public.projects ADD COLUMN notes text; then reload.');
+      } else {
+        setError(msg);
+      }
     } finally {
       setLoading(false);
     }
